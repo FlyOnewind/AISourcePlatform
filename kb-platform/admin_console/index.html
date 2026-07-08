@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AI知识库管理中台 - 管理后台</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div id="login-view" class="login-view">
+  <div class="login-card">
+    <h1>AI知识库管理中台</h1>
+    <p class="subtitle">管理后台（V1 本地演示版）</p>
+    <input id="api-key-input" type="text" placeholder="输入管理员 API Key（seed 脚本输出中的 admin_user）" />
+    <button id="login-btn">登录</button>
+    <p class="hint">提示：运行 `uv run python -m app.seeds.seed_data` 后，从控制台输出复制 admin 的 API Key。</p>
+  </div>
+</div>
+
+<div id="app-view" class="app-view hidden">
+  <nav class="sidebar">
+    <div class="brand">AI知识库中台</div>
+    <ul class="nav-list">
+      <li data-page="overview" class="active">总览</li>
+      <li data-page="capabilities">能力目录</li>
+      <li data-page="knowledge">知识库</li>
+      <li data-page="agents">Agent管理</li>
+      <li data-page="audit">审计日志</li>
+    </ul>
+    <button id="logout-btn">退出登录</button>
+  </nav>
+
+  <main class="content">
+    <section id="page-overview" class="page active">
+      <h2>系统总览</h2>
+      <div id="overview-cards" class="cards"></div>
+    </section>
+
+    <section id="page-capabilities" class="page">
+      <h2>能力目录</h2>
+      <div class="toolbar">
+        <select id="cap-type-filter">
+          <option value="">全部类型</option>
+          <option value="knowledge_base">知识库</option>
+          <option value="tool">工具</option>
+          <option value="skill">Skill</option>
+          <option value="prompt">Prompt</option>
+          <option value="agent">Agent</option>
+        </select>
+        <button id="cap-refresh-btn">刷新</button>
+      </div>
+      <table class="data-table">
+        <thead><tr><th>名称</th><th>类型</th><th>业务域</th><th>状态</th><th>版本</th><th>密级</th></tr></thead>
+        <tbody id="cap-table-body"></tbody>
+      </table>
+    </section>
+
+    <section id="page-knowledge" class="page">
+      <h2>知识库管理</h2>
+      <table class="data-table">
+        <thead><tr><th>名称</th><th>Key</th><th>业务域</th><th>密级</th><th>状态</th><th>操作</th></tr></thead>
+        <tbody id="kb-table-body"></tbody>
+      </table>
+      <h3>文档列表</h3>
+      <p class="hint">点击上方知识库行查看其文档，或直接上传文档到指定知识库：</p>
+      <div class="toolbar">
+        <input id="upload-kb-id" type="text" placeholder="知识库ID" />
+        <input id="upload-file" type="file" />
+        <button id="upload-btn">上传文档</button>
+      </div>
+      <table class="data-table">
+        <thead><tr><th>文件名</th><th>解析状态</th><th>切片数</th><th>版本</th></tr></thead>
+        <tbody id="doc-table-body"></tbody>
+      </table>
+    </section>
+
+    <section id="page-agents" class="page">
+      <h2>Agent管理</h2>
+      <table class="data-table">
+        <thead><tr><th>名称</th><th>角色</th><th>业务域</th><th>状态</th><th>是否主控</th></tr></thead>
+        <tbody id="agent-table-body"></tbody>
+      </table>
+    </section>
+
+    <section id="page-audit" class="page">
+      <h2>审计日志</h2>
+      <div class="toolbar">
+        <button id="audit-refresh-btn">刷新最近50条</button>
+      </div>
+      <table class="data-table">
+        <thead><tr><th>时间</th><th>Trace ID</th><th>操作者</th><th>动作</th><th>资源</th><th>结果</th><th>耗时(ms)</th></tr></thead>
+        <tbody id="audit-table-body"></tbody>
+      </table>
+    </section>
+  </main>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
