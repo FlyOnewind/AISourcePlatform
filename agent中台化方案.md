@@ -1,912 +1,314 @@
-# Agent 中台化方案 V1
-
-## 1. 目标与结论
-
-基于当前项目现状，这套系统已经具备做 Agent 中台的良好基础，但更准确地说，它现在还是一套“知识库检索与内容生产系统”，而不是“面向多 Agent 的统一中台”。
-
-现阶段最适合的方向，不是一次性把 Agent、Prompt、Skills、工具、MCP 全部做成重平台，而是先围绕中台的核心职责，把它们抽象成可注册、可复用、可统一接入、可观测、可治理的能力资产，再逐步补齐评测、版本管理和权限治理能力。
-
-Agent 中台的核心职责应收敛为五类：
-
-- 资产注册：有哪些 Agent、Prompt、Tool、Skill、知识库
-- 能力复用：不同业务可以复用同一套 Prompt、Tool、知识空间
-- 统一接入：业务系统按统一方式调用这些能力
-- 运行观测：谁调用了什么、成功还是失败、耗时多少
-- 治理能力：版本、权限、评测、下线、回滚
-
-这件事的核心难点不在于 MCP、工具、Skills、Prompt 的封装，而在于知识库本身的维护管理。原因很直接：
-
-- Prompt、Skill、Tool 也会持续更新，也需要版本、发布、灰度、评测和回滚；但相对知识资产，它们通常结构更清晰、边界更稳定，更适合先纳入平台治理。
-- 知识库是“持续变化的数据资产”，涉及来源、版本、权限、时效性、质量、评测、回溯、失效处理等一整套治理问题。
-- 如果知识库治理没有打稳，Agent 注册得再漂亮，最终也只是把不稳定的数据接给更多 Agent。
-
-因此，这版方案建议采用一个核心原则：
-
-- 统一入口
-- 分域治理
-
-也就是：
-
-- 用统一的平台入口管理 Agent、Prompt、Skills、工具、MCP、知识接入关系；
-- 但不要把它们当成同一种资产，用一套完全相同的表结构和治理方式硬管。
-
-因此，这版方案建议把中台建设拆成两层：
-
-- 第一层：能力中台
-  - 统一注册 Agent、Prompt、Skills、工具、MCP
-  - 统一查看运行情况
-  - 统一接入知识库
-- 第二层：知识治理中台
-  - 把知识库从“检索系统”升级为“可维护、可版本化、可评测”的平台资产
-
-## 2. 先讲清两个概念
-
-### 2.1 什么叫“统一管理”
-
-这里的统一管理，不是把 Prompt、Tool、Skill、Knowledge、Run Log 全塞进一张大表，也不是让它们共用完全一样的生命周期。
-
-这里说的统一，指的是：
-
-- 统一注册入口
-- 统一查询入口
-- 统一绑定关系
-- 统一运行观测入口
-
-举例：
-
-- `门店运营助手` 这个 Agent，在平台里可以绑定：
-  - 一个默认 Prompt
-  - 两个 Tool
-  - 一个 Skill
-  - 一个知识空间
-
-平台应该能统一看见这套关系，但这些对象本身仍然要分开治理：
-
-- Prompt 关心版本、内容、输入输出 schema
-- Tool 关心接口协议、超时、鉴权
-- Skill 关心来源、安装方式、入口定义
-- Knowledge 关心来源、版本、发布时间、权限、时效性
-- Run Log 关心执行过程、耗时、错误、命中内容
-
-所以，合理的统一是“统一入口”，不合理的统一是“统一成一种数据”。
-
-### 2.2 什么叫“Agent 注册”
-
-Agent 注册的本质是：把一个 Agent 从“散落在代码里的实现”变成“平台里可管理的正式对象”。
-
-也就是给 Agent 建档，让平台知道：
-
-- 它是谁
-- 它负责什么场景
-- 它默认用什么 Prompt
-- 它能调用哪些 Tool / Skill / MCP
-- 它能访问哪些知识空间
-- 它当前是否可用
-
-例如：
-
-- `agent_id`: `store_ops_assistant`
-- `name`: `门店运营助手`
-- `description`: 回答门店拉新、活动执行、会员运营问题
-- `default_prompt`: `store_ops_system_prompt v2`
-- `tools`: `kb_search_tool`, `excel_reader_tool`
-- `skills`: `campaign_analysis_skill`
-- `knowledge_space`: `store_ops_kb`
-- `status`: `active`
-
-注册之后，平台才可以：
-
-- 列出当前有哪些 Agent
-- 让业务系统按 `agent_id` 调用它
-- 控制它的知识和工具访问范围
-- 追踪它的运行情况和成功率
-- 做版本切换、灰度、下线
-
-## 3. 基于项目现状的判断
-
-当前项目里，已经有几块非常适合复用为中台底座的能力。
-
-### 3.1 已有的知识生产与检索底座
-
-- `backend/ingestion/pipeline.py`
-  - 已经打通“文档解析 -> 语义抽取 -> chunk 化 -> 索引 -> 自动生成评测数据”的完整入库链路。
-- `backend/app/db/models.py`
-  - 已经有 `documents`、`parsed_elements`、`assets`、`knowledge_chunks` 等核心数据模型。
-- `backend/app/db/repositories/chunks.py`
-  - 已有知识块持久化和按文档/状态/分页查询能力。
-- `backend/app/api/v1/search.py`
-  - 已经有统一检索入口，并带有搜索日志记录。
-
-这意味着“知识库中心”不需要从零搭建，当前系统本身就可以演进为中台的 Knowledge Plane。
-
-### 3.2 已有的 Prompt 集中管理基础
-
-- `backend/llm/prompts.py`
-  - 已经集中管理语义抽取、查询改写、Rerank、视觉理解等提示词。
-
-问题不在“有没有 Prompt”，而在于：
-
-- 目前 Prompt 仍然是代码内常量；
-- 缺少版本、发布、灰度、评测、回滚能力；
-- 还没有抽象成 Agent 可引用的独立平台资产。
-
-### 3.3 已有的注册模式雏形
-
-- `backend/parsers/registry.py`
-  - 已经体现出“能力注册表”的设计模式。
-- `backend/app/core/deps.py`
-  - 已经在启动期集中装配 parser、index、repo、pipeline 等共享能力。
-
-这说明项目的工程风格已经适合继续往“注册中心 + 运行时装配”方向推进。
-
-### 3.4 已有的运行状态追踪能力
-
-- `backend/app/db/models.py`
-  - `DbIngestJob` 已支持异步任务状态跟踪；
-  - `DbSearchLog` 已支持搜索日志与阶段耗时记录。
-- `backend/app/api/v1/jobs.py`
-  - 已支持 SSE 推送任务进度。
-- `frontend/js/components/dashboard.js`
-  - 已有系统概览页，但目前主要展示文档、知识块、依赖健康状态。
-
-也就是说，“运行情况展示”并不是空白，只是目前追踪对象还是“入库任务”和“检索请求”，尚未扩展到“Agent 运行”。
-
-### 3.5 已有的评测基础设施
-
-- `evaluation/`
-  - 已经形成数据生成、人工合并、运行评测、历史记录追加的完整闭环。
-- `backend/ingestion/pipeline.py`
-  - 入库后会自动触发评测数据生成。
-
-这是一笔很重要的资产。后续不只可以评测知识库检索，还可以扩展到：
-
-- Prompt 评测
-- Skill 评测
-- Agent 任务完成质量评测
-
-## 4. 中台化总体设计
-
-建议把当前系统演进为“三层结构”。
-
-### 4.1 Knowledge Plane：知识资产层
-
-负责统一管理所有可被 Agent 消费的知识内容。
-
-范围包括：
-
-- 原始文档
-- 解析元素
-- 资产文件
-- 知识块
-- 检索索引
-- 评测数据集
-- 知识版本与状态
-
-这一层继续复用当前项目作为主底座。
-
-### 4.2 Capability Plane：能力注册层
-
-负责统一注册和管理 Agent 可调用的能力对象。
-
-能力对象包括：
-
-- Prompt
-- Skill
-- Tool
-- MCP Server / MCP Tool
-
-核心职责：
-
-- 注册
-- 查询
-- 版本管理
-- 依赖关系管理
-- 发布状态管理
-
-### 4.3 Runtime Plane：运行与观测层
-
-负责记录每个 Agent 的实际运行情况。
-
-运行对象包括：
-
-- Agent 定义
-- Agent Run
-- Run Step
-- 调用的 Prompt / Skill / Tool / MCP
-- 输入输出摘要
-- Token / 时长 / 成功率 / 错误信息
-- 产出物与关联知识引用
-
-## 5. 中台的核心对象模型
-
-建议优先抽象以下平台对象。
-
-### 5.1 AgentDefinition
-
-表示一个注册到中台的 Agent。
-
-建议字段：
-
-- `agent_id`
-- `name`
-- `description`
-- `owner`
-- `entry_type`
-  - 例如 `codex_agent`、`service_agent`
-- `status`
-  - `draft` / `active` / `deprecated`
-- `default_prompt_version_id`
-- `default_skill_binding_ids`
-- `default_tool_binding_ids`
-- `default_kb_scope`
-- `metadata`
-
-### 5.2 PromptTemplate / PromptVersion
-
-把当前代码里的 prompt 抽成平台资产。
-
-建议拆成两层：
-
-- `prompt_template`
-  - 表示一个逻辑 Prompt，例如“query_rewrite”
-- `prompt_version`
-  - 表示该 Prompt 的具体版本内容
-
-建议字段：
-
-- `prompt_key`
-- `scene`
-- `content`
-- `input_schema`
-- `output_schema`
-- `eval_status`
-- `version`
-- `published_at`
-
-### 5.3 SkillDefinition
-
-统一描述可复用 Skill。
-
-建议字段：
-
-- `skill_id`
-- `name`
-- `source_type`
-  - `local_skill` / `repo_skill` / `builtin_skill`
-- `entry_uri`
-- `manifest`
-- `owner`
-- `version`
-- `status`
-
-### 5.4 ToolDefinition / MCPDefinition
-
-统一管理工具与 MCP 接入。
-
-建议字段：
-
-- `tool_id`
-- `name`
-- `tool_type`
-  - `http_api` / `python_adapter` / `mcp_tool`
-- `server_id`
-- `capability_schema`
-- `auth_config`
-- `timeout_policy`
-- `status`
-- `version`
-
-### 5.5 AgentRun / AgentRunStep
-
-用于展示 Agent 运行情况。
-
-建议字段：
-
-- `run_id`
-- `agent_id`
-- `trigger_type`
-  - `manual` / `api` / `schedule`
-- `status`
-  - `queued` / `running` / `completed` / `failed`
-- `started_at`
-- `ended_at`
-- `input_summary`
-- `output_summary`
-- `error_message`
-- `token_usage`
-- `cost`
-- `latency_ms`
-
-`run_step` 建议记录：
-
-- 使用了哪个 Prompt 版本
-- 使用了哪个 Skill / Tool / MCP
-- 命中了哪些知识块
-- 每一步耗时与结果
-
-### 5.6 KnowledgeAssetVersion
-
-这是后续最关键、也最难的对象。
-
-建议为知识资产补一层平台级版本抽象：
-
-- `knowledge_asset`
-  - 文档、FAQ、规则库、操作手册等逻辑资产
-- `knowledge_asset_version`
-  - 每次入库、修改、审核后的具体版本
-
-这样后面 Agent 才能引用：
-
-- 某个知识空间
-- 某个分类
-- 某个发布版本
-- 某个时间点有效的知识快照
-
-## 6. 为什么知识库治理是核心难点
-
-这一点建议在中台建设里明确作为主线，不要和 Skills / Prompt / Tool 的封装放在同一复杂度上处理。
-
-### 6.1 知识不是静态配置，而是动态资产
-
-Prompt、Skill、Tool 也不是静态配置，它们同样会更新、升级和下线，也需要版本、发布和回滚能力。
-
-但知识库不一样，它除了“会变”之外，还额外叠加了数据资产治理问题：
-
-- 文档不断新增和替换
-- 同一知识多版本并存
-- 来源不一致
-- 内容冲突
-- 过期但未失效
-- Chunk 切分策略调整后评测集失真
-- 不同 Agent 对知识时效性和权限范围要求不同
-
-所以这里真正想强调的不是“Prompt / Skill / Tool 不变”，而是“知识资产的治理维度更多、链路更长、失败成本更高”。
-
-### 6.2 当前项目已经有“知识治理问题”的前兆
-
-从现有实现可以直接看到几个信号：
-
-- 入库后自动生成评测数据，但仍需要人工合并
-- 评测时需要过滤失效 chunk
-- 文档重入库后需要清理旧数据
-- 搜索链路虽然成熟，但平台层还没有“知识发布版本”概念
-
-这说明系统已经不只是“能检索”，而是开始面对“知识如何持续保持可用”的问题了。
-
-### 6.3 真正要解决的是四类治理问题
-
-第一类：来源治理
-
-- 这条知识来自哪份原文
-- 谁上传的
-- 什么时候生效
-- 是否经过审核
-
-第二类：版本治理
-
-- 文档换版后，老 chunk 如何处理
-- Prompt/Agent 是否绑定某个知识快照
-- 评测数据对应哪个知识版本
-
-第三类：质量治理
-
-- 是否存在重复或冲突知识
-- 检索命中率是否下降
-- 哪些知识块高频命中但反馈差
-
-第四类：权限治理
-
-- 不同 Agent 是否能访问不同知识空间
-- 是否需要按团队、业务线、敏感级别隔离
-
-## 7. 建议的落地路径
-
-建议按“基于已有基础、先收敛底座、再补平台骨架、最后做完善治理”的思路推进，而不是按概念一次铺满。
-
-这套系统现在已经有：
-
-- 知识生产与检索底座
-- Prompt 集中管理雏形
-- 注册表模式雏形
-- 运行日志和任务状态追踪
-- 检索评测基础设施
-
-所以分阶段设计的原则应该是：
-
-1. 先把已有知识、Prompt、注册、日志能力收敛成可复用底座
-2. 再把平台对象和资产注册体系补齐
-3. 再把 Agent 统一调用、运行留痕、知识空间接入打通
-4. 最后补评测、版本、发布、权限等治理能力
-
-## 8. 为什么这样划分阶段
-
-这个阶段划分不是按功能类别随手拆，而是按“依赖关系 + 实施风险 + 交付价值”拆。
-
-### 8.1 先收敛底座，再注册
-
-如果不先把当前项目里已经存在的知识检索、Prompt 管理、注册表、日志追踪等能力收敛成稳定底座，后面注册出来的平台对象就会直接耦合到底层实现细节，后续很难演进。
-
-但如果不再进一步把 `Agent / Prompt / Skill / Tool / Knowledge Space` 定义成平台对象，后面运行时也会说不清：
-
-- 这次运行到底用了哪个 Prompt
-- 这个 Tool 是不是平台认可的能力
-- 这个 Agent 当前绑定了哪个知识范围
-
-所以合理顺序应该是：
-
-- 先收敛底层能力边界
-- 再定义平台对象
-- 再让平台对象运行
-
-### 8.2 先统一接入与调用留痕，再逐步平台化知识与能力
-
-如果只做注册中心，中台会停留在“资产目录”，还不是“可运行平台”。
-
-因此第二步必须尽快形成统一接入和调用留痕能力，让平台能记录：
-
-- 谁调用了哪个 Agent
-- Agent 使用了哪些 Prompt / Tool / Skill / Knowledge Space
-- 调用成功还是失败
-- 总耗时和错误原因
-
-只有这样，后续无论是知识空间接入，还是 Prompt / Skill / Tool 的版本切换和评测，才有真实调用语义，而不是孤立配置。
-
-### 8.3 知识治理必须做，但要晚于平台骨架稳定
-
-知识库是最难的部分，但如果一开始就做：
-
-- 知识版本
-- 发布流
-- 权限体系
-- 评测基线
-
-项目会迅速变重，而且前面没有平台骨架可以挂这些能力。
-
-而且如果在运行链路、绑定关系、平台对象都还没有稳定时就上重治理，知识治理能力也会缺少明确挂载点。
-
-因此，合理顺序是：
-
-- 先做知识空间接入
-- 再做知识质量与版本治理
-
-### 8.4 评测和版本治理必须建立在真实运行数据上
-
-如果没有前面的注册、绑定、运行和知识空间抽象，后面的：
-
-- Prompt 评测
-- Agent 质量看板
-- 版本回滚
-
-都会变成没有上下文的孤立功能。
-
-所以它们应该放在平台基础稳定之后。
-
-## 9. 对当前项目的具体改造建议
-
-如果就在这个仓库里开始演进，建议优先增加以下模块。
-
-### 9.1 后端模块
-
-建议新增：
-
-- `backend/app/api/v1/platform/agents.py`
-- `backend/app/api/v1/platform/prompts.py`
-- `backend/app/api/v1/platform/skills.py`
-- `backend/app/api/v1/platform/tools.py`
-- `backend/app/api/v1/platform/knowledge_spaces.py`
-- `backend/app/api/v1/platform/runs.py`
-
-建议新增仓储：
-
-- `backend/app/db/repositories/agent_definitions.py`
-- `backend/app/db/repositories/agent_runs.py`
-- `backend/app/db/repositories/prompt_assets.py`
-- `backend/app/db/repositories/capability_assets.py`
-- `backend/app/db/repositories/knowledge_spaces.py`
-
-### 9.2 数据库表
-
-建议新增最小集合：
-
-- `agent_definitions`
-- `prompt_templates`
-- `prompt_versions`
-- `skill_definitions`
-- `tool_definitions`
-- `knowledge_spaces`
-- `agent_runs`
-- `agent_run_steps`
-
-后续增量表：
-
-- `agent_prompt_bindings`
-- `agent_skill_bindings`
-- `agent_tool_bindings`
-- `agent_knowledge_bindings`
-- `knowledge_space_sources`
-- `prompt_evaluations`
-- `agent_evaluations`
-- `skill_versions`
-- `tool_versions`
-- `agent_releases`
-
-### 9.3 前端页面
-
-在当前 SPA 上新增：
-
-- Agent 管理
-- Prompt 资产管理
-- Skills / Tools 资产管理
-- Knowledge Space 管理
-- Agent 运行监控
-
-现有 `dashboard.js` 可保留为系统总览，但后续可新增平台维度指标：
-
-- 注册 Agent 数
-- 最近 24h 运行次数
-- 成功率
-- 平均耗时
-- 高频失败 Prompt / Tool
-
-## 10. 第一阶段最小可落地方案
-
-如果只做第一期，建议不要一上来做全量治理，先做一版最小闭环。
-
-### 10.1 先落的对象
-
-- `agent_definitions`
-- `prompt_templates`
-- `prompt_versions`
-- `skill_definitions`
-- `tool_definitions`
-- `knowledge_spaces`
-- `agent_runs`
-- `agent_run_steps`
-
-### 10.2 先支持的能力
-
-- 注册一个 Agent
-- 给 Agent 绑定默认 Prompt
-- 给 Agent 绑定 Tool / Skill / Knowledge Space
-- 触发一次 Agent 运行
-- 记录运行过程与结果
-- 在前端查看 Agent 列表和运行列表
-
-### 10.3 暂时不要急着做满的部分
-
-第一期先不做：
-
-- Prompt 自动灰度
-- Skill 自动安装与依赖处理
-- Tool 健康探测矩阵
-- Knowledge Release 发布流
-- 复杂权限模型
-
-这些都可以后补。第一期只要能证明三件事就够了：
-
-- Agent 能被平台识别
-- Agent 能绑定平台资产
-- Agent 能被统一调用且过程可追踪
-
-## 11. 分阶段开发方案
-
-下面给出一版基于现有基础、从搭基础开始逐步演进到功能完善中台的六阶段开发方案。每一阶段结束后，都应得到一个可验收、可演示、可继续叠加的结果。
-
-### Phase 0：底座收敛与平台边界
-
-目标：
-
-- 先复用并收敛当前仓库已经存在的底层能力
-- 为后续平台对象、API 和运行链路建立稳定依赖边界
-
-开发内容：
-
-- 收敛现有底座能力为内部公共服务
-  - 知识入库与检索底座
-  - Prompt 提供与加载逻辑
-  - 注册表与运行时装配逻辑
-  - 搜索日志、任务日志、阶段耗时记录
-- 统一底层接口边界
-  - 明确“平台层调用什么，不直接感知什么”
-  - 避免后续平台 API 直接耦合 parser / index / repo 细节
-- 梳理现有数据与对象映射关系
-  - 哪些对象直接复用现有表
-  - 哪些对象需要新增平台表
-  - 哪些日志和状态需要扩展为 Agent Runtime 语义
-
-建议复用：
-
-- `backend/ingestion/pipeline.py` 的入库流水线
-- `backend/app/api/v1/search.py` 的统一检索入口
-- `backend/llm/prompts.py` 的集中 Prompt 管理雏形
-- `backend/parsers/registry.py` 与 `backend/app/core/deps.py` 的注册和装配模式
-- `DbIngestJob`、`DbSearchLog`、SSE 任务跟踪能力
-
-阶段完成后会得到：
-
-- 后续平台层不再直接散落依赖底层实现
-- 能明确区分“现有底座复用部分”和“平台新增部分”
-- 第一阶段到第三阶段有稳定的底层承载面
-
-唯一验收场景：
-
-- 团队能明确说出：当前仓库中哪些能力直接作为中台底座复用，哪些能力需要在平台层重新抽象
-
-### Phase 1：平台对象与资产注册中心
-
-目标：
-
-- 把平台里的核心对象正式纳管
-- 让 Agent、Prompt、Skill、Tool、Knowledge Space 从“代码内能力”变成“平台资产”
-- 建立统一注册与查询入口
-
-开发内容：
-
-- 定义第一期平台对象与最小字段
-  - `Agent`
-  - `Prompt`
-  - `Skill`
-  - `Tool`
-  - `Knowledge Space`
-  - `Run`
-- 数据表
-  - `agent_definitions`
-  - `prompt_templates`
-  - `prompt_versions`
-  - `skill_definitions`
-  - `tool_definitions`
-  - `knowledge_spaces`
-- 后端 API
-  - Agent 注册、查询、编辑、启停
-  - Prompt 注册、版本查询、状态切换
-  - Skill / Tool 注册、查询、启停
-  - Knowledge Space 创建、查询、编辑
-- 前端页面
-  - Agent 列表页
-  - Prompt 资产页
-  - Skill / Tool 资产页
-  - Knowledge Space 列表页
-
-基于已有基础的合理性：
-
-- 当前项目已经有大量可复用能力，但缺少平台资产层
-- 这一阶段的重点不是重新实现能力，而是补“可管理对象”这一层
-
-阶段完成后会得到：
-
-- 平台可以明确回答“现在有哪些 Agent、Prompt、Skill、Tool、Knowledge Space”
-- Agent 和能力资产从代码实现变成平台对象
-- 后续运行、评测、发布、权限都有明确挂载点
-
-唯一验收场景：
-
-- 可以在平台里注册一个 `门店运营助手`，并查询到它的基础定义
-
-### Phase 2：统一接入与调用观测
-
-目标：
-
-- 让注册后的 Agent 可以被统一调用
-- 让平台能记录一次调用使用了哪些平台资产
-- 提前打下最基础的运行观测能力
-
-开发内容：
-
-- 数据表
-  - `agent_prompt_bindings`
-  - `agent_skill_bindings`
-  - `agent_tool_bindings`
-  - `agent_knowledge_bindings`
-  - `agent_runs`
-  - `agent_run_steps`
-- 后端 API
-  - Agent 统一调用接口
-  - Agent 调用记录列表接口
-  - Agent 调用记录详情接口
-  - Agent 调用步骤接口
-- 接入能力
-  - 根据 `agent_definition` 装配默认 Prompt / Tool / Skill / Knowledge Space
-  - 支持一条最小中台调用链路
-    - 接收问题
-    - 记录使用的 Prompt
-    - 通过 Knowledge Space 调用现有检索能力
-    - 返回结果摘要
-  - 在每一步写入 `agent_run_steps`
-- 基础观测
-  - 成功 / 失败
-  - 总耗时
-  - 使用了哪些 Prompt / Tool
-  - 错误原因
-- 前端页面
-  - Agent 运行列表页
-  - Agent 运行详情页
-
-建议复用：
-
-- 复用当前 `DbIngestJob` / `jobs.py` 的运行状态追踪思路
-- 复用当前 `DbSearchLog` 的日志落库模式
-- 复用当前 `deps.py` 的集中装配思路，演进为平台运行时装配
-
-阶段完成后会得到：
-
-- 一个平台注册后的 Agent 可以被统一调用
-- 平台可以追踪“用了什么 Prompt、调了什么 Tool、耗时多久、哪里失败了”
-- 中台从“资产目录”升级成“统一接入和观测底座”
-
-唯一验收场景：
-
-- `门店运营助手` 能回答一个问题，并在平台里留下完整 run 记录
-
-### Phase 3：知识空间与能力绑定平台化
-
-目标：
-
-- 把当前知识库从“内部检索实现”升级成“平台知识资产入口”
-- 让 Agent 通过知识空间消费知识，而不是直接耦合底层索引
-- 让 Prompt / Skill / Tool / Knowledge Space 的绑定关系真正进入平台运行时
-
-开发内容：
-
-- 数据表
-  - `knowledge_space_sources`
-  - `knowledge_space_agents`
-- 后端能力
-  - Agent 按 `knowledge_space` 发起检索
-  - 支持按分类、来源、状态限制知识范围
-  - Agent 不直接感知 Milvus / PG 细节
-  - 运行时按绑定关系装配 Prompt / Skill / Tool / Knowledge Space
-  - 支持按 Agent 场景隔离默认能力集合
-- 前端页面
-  - Knowledge Space 详情页
-  - 知识空间绑定页
-  - Agent 与 Knowledge Space 关系页
-
-建议复用：
-
-- 复用当前 `documents`、`knowledge_chunks`、`search` 体系作为底层知识能力
-- 在其上新增空间抽象，而不是重写检索系统
-
-为什么此阶段不做重版本治理：
-
-- 这一阶段先解决“知识怎么接入平台”
-- 不急着解决“知识怎么发布和回滚”
-- 否则会过早把知识治理做重
-
-阶段完成后会得到：
-
-- 不同 Agent 可以绑定不同知识范围
-- 知识库开始具备平台级复用能力
-- 后续做权限、版本、发布时有清晰边界
-
-唯一验收场景：
-
-- 两个 Agent 绑定不同知识空间，对同一问题给出不同知识范围结果
-
-### Phase 4：评测与质量治理
-
-目标：
-
-- 回答“平台里的 Agent 跑得好不好”
-- 开始把 Prompt、Skill、Tool、知识、Agent 质量纳入可观测范围
-
-开发内容：
-
-- 数据表
-  - `prompt_evaluations`
-  - `agent_evaluations`
-  - `skill_evaluations`
-  - `tool_health_snapshots`
-  - `knowledge_quality_snapshots`
-- 后端能力
-  - 复用 `evaluation/` 体系扩展 Prompt / Agent / Skill 评测
-  - 对 Agent Run 聚合质量指标
-  - 记录成功率、平均耗时、知识命中率、常见失败原因
-  - 建立 Tool 健康状态与失败分类统计
-- 前端页面
-  - Agent 质量看板
-  - Prompt 版本效果页
-  - Skill / Tool 健康概览页
-  - 知识空间质量概览页
-
-建议复用：
-
-- 复用当前 `evaluation/run_eval.py`、`history.jsonl` 的评测闭环思想
-- 将“检索评测”扩展为“平台能力评测”
-
-阶段完成后会得到：
-
-- 平台不只知道 Agent 有没有运行，还知道运行质量如何
-- Prompt 切换、知识更新开始有量化依据
-- 后续版本切换不再只靠人工主观判断
-
-唯一验收场景：
-
-- 能比较两个 Prompt 版本在同一 Agent 下的效果差异
-
-### Phase 5：版本、发布与权限治理
-
-目标：
-
-- 让平台从“能用”升级成“可持续演进、可回滚”
-- 把 Prompt / Skill / Tool / Knowledge 的变更和权限纳入治理
-
-开发内容：
-
-- 数据表
-  - `knowledge_releases`
-  - `skill_versions`
-  - `tool_versions`
-  - `agent_releases`
-  - `change_logs`
-  - `permission_policies`
-- 后端能力
-  - 版本发布状态管理
-    - `draft`
-    - `active`
-    - `deprecated`
-  - Agent 绑定指定版本
-  - 简单回滚能力
-  - 变更记录与审计
-  - Agent / 团队 / 业务线维度的知识与工具访问控制
-- 前端页面
-  - 发布管理页
-  - 版本对比页
-  - 变更历史页
-  - 权限策略页
-
-阶段完成后会得到：
-
-- Prompt 改版、知识更新、Skill 升级都可控
-- Agent 的运行结果可以和版本关联
-- 中台进入可治理状态，而不是持续堆配置
-- 关键能力的访问边界也开始可控
-
-唯一验收场景：
-
-- 能切换 Agent 绑定的 Prompt / Knowledge Release 版本，并在异常时回滚；同时限制不同 Agent 访问不同知识与工具
-
-## 12. 这版方案的优先级判断
-
-建议按下面的优先级做，不建议反过来。
-
-1. 先收敛已有底座，补稳定边界
-2. 再建立平台对象与资产注册
-3. 再打通统一调用、运行留痕和能力绑定
-4. 再抽象知识空间与知识范围接入
-5. 然后做评测与质量治理
-6. 最后做版本、发布与权限治理
-
-原因是：
-
-- 如果不先收敛已有底座，平台层会直接耦合底层实现，后续很难维护；
-- 如果只做能力注册，不做统一调用和留痕，中台会停留在资产目录；
-- 如果没有运行数据，评测和版本治理会失去上下文；
-- 如果一开始就把知识治理、权限治理、发布治理全部做重，周期会拉得过长；
-- 最稳妥的路径是先搭基础，再长骨架，最后把治理能力补全。
-
-## 13. 最终建议
-
-这套项目非常适合作为 Agent 中台的起点，但定位要稍微调整：
-
-- 不是“在知识库系统旁边再搭一个中台”
-- 而是“让当前知识库系统演进为 Agent 中台的知识与运行底座”
-
-短期内，建议先把以下目标做成第一版里程碑：
-
-- 现有知识、Prompt、注册、日志能力完成底座收敛
-- Agent 可注册
-- Prompt / Skill / Tool / MCP 可注册
-- Agent Run 可追踪、可展示
-- Agent 可绑定知识空间运行
-
-中期再重点攻坚：
-
-- 能力绑定运行时装配
-- 知识空间治理
-- 知识版本与发布
-- Prompt / Skill 评测
-- 平台级版本管理
-
-一句话概括这版方案：
-
-先把现有底座收敛成平台基础，再把 Agent 周边能力逐步“纳管”，最后把知识库和能力资产一起升级成“可治理”的平台资产，中台才会真正稳。
+# Agent 中台化方案 V2
+## 1. 方案定位与核心目标
+### 1.1 核心目标
+基于现有知识库系统演进，打造面向智能体开发的垂直能力平台，**核心解决智能体开发过程中的重复造轮子问题**：
+- 可复用能力统一沉淀、统一管理，一次开发全平台复用
+- 通用运行时逻辑100%下沉，新智能体开发80%的重复代码不需要再写
+- 全链路可观测、可追溯、可治理，迭代、回滚、灰度不需要业务改代码发版
+### 1.2 本质定位
+不是通用API网关，是**面向智能体场景的垂直PaaS+能力资产市场**：统一入口只占整体代码量<5%，95%核心价值聚焦在能力沉淀、运行时引擎、治理观测上，和现有知识库系统平滑融合，不做推倒重来。
+### 1.3 核心设计原则
+#### 必须坚持的原则
+1. **复用优先**：所有核心能力优先复用现有代码，不重写已有成熟组件（检索Pipeline、LLM客户端、SSE推送、ORM框架、依赖注入体系）
+2. **零侵入兼容**：现有代码通过装饰器即可纳管，支持渐进式迁移，不要求业务一次性重构
+3. **版本不可变**：所有资产（Prompt/Tool/Skill/Agent）发布后的版本永不修改，变更必须发新版本，发布时绑定全量依赖快照，底层升级不影响线上业务
+4. **最小化第一期**：第一期只做最小可用闭环，不提前做重治理、重功能，6周内交付可生产版本，后续功能按需迭代
+5. **边界清晰**：各中心职责单一，通过标准API通信，不直接访问对方数据库，可独立演进
+#### 第一期明确不做的内容（避免范围蔓延）
+- 独立MCP Server生命周期管理、MCP自动批量发现
+- 可视化拖拽工作流编排、多Agent协作
+- 复杂RBAC权限体系、发布审批流、操作审计
+- 多模型路由、智能降级、成本自动分摊
+- 代码沙箱隔离、断点续跑、人工转接
+- 多渠道接入（微信/企微/钉钉）、跨Agent共享记忆
+- 复杂评测体系、AB测试、根因分析
+### 1.4 整体架构
+三层架构 + 六大核心中心，薄运行时组装：
+```
+┌─────────────────────────────────────────────────────┐
+│  应用层：前端管理台、OpenAPI、SDK                     │
+├─────────────────────────────────────────────────────┤
+│  Agent运行时（薄组装层，无状态，不存储数据）          │
+│  记忆加载→Prompt渲染→知识检索→LLM决策→工具/技能调用→流式返回
+├─────────────────────────────────────────────────────┤
+│  六大核心中心（能力层，独立演进）                     │
+│  Prompt资产中心 | 工具能力中心 | 技能流程中心         │
+│  知识资产中心   | Agent配置中心 | 运行观测中心        │
+├─────────────────────────────────────────────────────┤
+│  底座层：复用现有系统能力                           │
+│  PostgreSQL | Milvus | 火山LLM/Embedding | MinIO | Dramatiq
+└─────────────────────────────────────────────────────┘
+```
+---
+## 2. 六大核心中心最小化设计
+所有中心第一期只保留核心字段和核心能力，后续功能按需迭代：
+### 2.1 Prompt资产管理中心
+> 全平台提示词唯一可信源，替代所有硬编码Prompt
+#### 核心模型（2张表，符合现有SQLAlchemy风格）
+| 表名 | 核心字段 | 说明 |
+|---|---|---|
+| `prompt_templates` | `prompt_id` PK、`prompt_key` UK（全局唯一调用标识，`域.场景.功能`命名）、`name`、`description`、`scene`、`current_stable_version_id` FK、`current_beta_version_id` FK、`owner`、`status`、`created_at/updated_at` | 逻辑Prompt模板，一个场景对应一个模板 |
+| `prompt_versions` | `version_id` PK、`prompt_id` FK、`version_no`（从1递增）、`content`（支持字符串/OpenAI消息数组两种格式，JSONB存储）、`variables`（变量定义列表，包含name/type/required/default/description，JSONB）、`output_schema`（JSON Schema，JSONB）、`change_log`、`status`（draft/active/deprecated）、`published_at`、`created_at` | 不可变版本，历史版本永久保留 |
+| `prompt_call_logs` | `call_id` PK、`trace_id/run_id/agent_id`、`prompt_id/version_id`、`variables`（脱敏）、`latency_ms`、`success`、`error_msg`、`created_at` | 调用日志，异步写入，不阻塞主链路 |
+#### 第一期核心能力
+1. 模板/版本基础CRUD、版本发布/回滚、`stable/beta/latest`别名机制
+2. 统一`render`接口：服务端渲染、变量必填校验、输出Schema自动追加格式约束
+3. Python客户端薄封装：本地内存缓存、自动重试、上下文自动注入（agent_id/run_id）
+4. 多级缓存：本地内存缓存 + 版本发布主动失效，降级兜底（缓存失效时返回最近成功版本）
+5. 前端基础管理页：模板列表、版本编辑、在线调试、调用记录查询
+#### 复用现有能力
+- 复用现有`llm/prompts.py`作为兜底降级内容
+- 复用现有JSON序列化、错误处理逻辑
+---
+### 2.2 工具能力中心
+> 全平台原子可执行能力统一管控入口，MCP工具不单独建表，统一纳入Tool模型
+#### 核心模型（2张表）
+| 表名 | 核心字段 | 说明 |
+|---|---|---|
+| `tool_definitions` | `tool_id` PK、`tool_name` UK（给LLM看的调用名，小写下划线）、`display_name`、`description`（传给LLM的功能说明）、`tool_type`（python_adapter/http_api/mcp_tool）、`is_dangerous`（是否危险工具，默认false）、`is_idempotent`（是否幂等，幂等才自动重试）、`current_stable_version_id` FK、`current_beta_version_id` FK、`owner`、`tags`、`status`、`created_at/updated_at` | 逻辑工具定义，统一纳管三类工具 |
+| `tool_versions` | `version_id` PK、`tool_id` FK、`version_no`、`capability_schema`（OpenAI Function Calling格式参数Schema，JSONB）、`timeout_ms`（默认30s）、`retry_config`、`auth_config`（加密存储）、`tool_config`（差异化配置：Python入口点/HTTP地址方法/MCP服务和工具名，JSONB）、`change_log`、`status`、`published_at`、`created_at` | 不可变版本 |
+| `tool_call_logs` | `call_id` PK、`trace_id/run_id/agent_id`、`tool_id/version_id`、`arguments`（脱敏）、`result`（摘要）、`latency_ms`、`retry_count`、`success`、`error_msg`、`created_at` | 调用日志 |
+#### 第一期核心能力
+1. 三种注册方式：`@tool`装饰器自动注册（自动从类型注解/docstring生成Schema）、HTTP工具表单注册、MCP工具手动配置
+2. 执行器注册模式，支持三类工具执行：Python本地调用（线程池隔离）、HTTP接口调用、MCP stdio协议调用
+3. 统一`call`接口：参数自动校验、超时控制、幂等工具自动重试1次、异常统一捕获返回结构化错误、熔断降级（错误率>50%熔断5分钟）
+4. 细粒度权限：危险工具需要单独授权才能绑定给Agent
+5. 前端管理页：工具列表、版本管理、在线调试、调用记录
+#### 复用现有能力
+- 复用现有`parsers/registry.py`的注册表模式实现执行器注册
+- 复用现有HTTP客户端、线程池、异常处理逻辑
+---
+### 2.3 技能流程中心
+> 全平台标准化业务SOP沉淀中心，固定多步流程黑盒调用，避免LLM自由发挥走偏流程
+#### 核心模型（2张表）
+| 表名 | 核心字段 | 说明 |
+|---|---|---|
+| `skill_definitions` | `skill_id` PK、`skill_name` UK（调用名）、`display_name`、`description`（传给LLM的功能说明）、`skill_type`（code/workflow/mcp_skill，第一期只支持code）、`need_human_confirm`（是否需要人工确认，第一期不实现，预留字段）、`current_stable_version_id` FK、`current_beta_version_id` FK、`owner`、`tags`、`status`、`created_at/updated_at` | 逻辑技能定义 |
+| `skill_versions` | `version_id` PK、`skill_id` FK、`version_no`、`input_schema`/`output_schema`、`depends_on`（依赖的Prompt/Tool/Skill ID和版本，JSONB，自动扫描）、`skill_config`（代码入口点/流程定义/MCP配置，JSONB）、`timeout_ms`（默认5分钟）、`change_log`、`status`、`published_at`、`created_at` | 不可变版本，第一期仅支持代码型技能 |
+| `skill_call_logs` | `call_id` PK、`trace_id/run_id/agent_id`、`skill_id/version_id`、`arguments`（脱敏）、`result`（摘要）、`step_details`（步骤详情，JSONB）、`latency_ms`、`success`、`error_step`、`error_msg`、`created_at` | 调用日志，记录每一步执行情况 |
+#### 第一期核心能力
+1. `@skill`装饰器自动注册：自动扫描依赖的Prompt/Tool、自动生成入参出参Schema，现有多步流程加装饰器即可纳管，零代码改造
+2. 简单流程调度：支持顺序执行、条件分支，步骤自动调用对应中心的接口（Prompt渲染/Tool调用/Skill嵌套）
+3. 统一`call`接口：参数校验、步骤级超时和错误处理、步骤日志自动记录
+4. 接口调用格式和Tool完全一致，LLM和上层不需要区分Tool和Skill
+#### 复用现有能力
+- 复用现有`ingestion/pipeline.py`的流程执行思路
+- 复用现有`Dramatiq`异步任务执行长耗时技能
+---
+### 2.4 知识资产中心
+> 现有知识库系统平滑演进为平台知识入口，Agent不直接耦合底层检索细节
+#### 第一期极简实现（不新建核心表）
+1. **知识空间第一期复用现有`knowledge_chunks.category`字段**：一个分类对应一个知识空间，不需要额外建表，配置空间ID到分类的映射即可
+2. 统一`search_by_space`接口：接收空间ID列表、查询参数，自动转换为现有检索Pipeline的过滤条件（categories/knowledge_types/doc_ids），完全复用现有向量+BM25双路检索、RRF融合、LLM Rerank能力
+3. 检索日志自动同步到运行观测中心，和Agent Run关联
+4. 前端知识空间管理页极简：列表展示现有分类，支持编辑空间名称、描述、绑定文档范围
+#### 后续迭代方向（第一期不实现）
+后续再逐步新增知识空间表、版本发布流、权限隔离、快照能力，第一期完全复用现有检索底座，不重写核心逻辑。
+#### 复用现有能力
+- 100%复用现有`retrieval/pipeline.py`的混合检索能力
+- 复用现有`documents/parsed_elements/knowledge_chunks`表和入库Pipeline
+---
+### 2.5 Agent配置中心
+> 所有智能体统一注册、配置、发布入口，零代码搭建Agent
+#### 核心模型（3张表）
+| 表名 | 核心字段 | 说明 |
+|---|---|---|
+| `agent_definitions` | `agent_id` PK、`name`、`description`、`agent_type`（第一期只支持rag_chat）、`avatar`、`tags`、`owner`、`visibility`（private/public）、`current_stable_version_id` FK、`current_beta_version_id` FK、`status`、`usage_count`、`success_rate`、`created_at/updated_at` | 逻辑Agent定义 |
+| `agent_versions` | `version_id` PK、`agent_id` FK、`version_no`、`prompt_bindings`（绑定的Prompt和版本，JSONB快照）、`tool_bindings`（绑定的Tool列表和版本，JSONB快照）、`skill_bindings`（绑定的Skill列表和版本，JSONB快照）、`knowledge_bindings`（绑定的知识空间和检索配置，JSONB快照）、`model_config`（模型名、temperature、max_tokens，JSONB）、`memory_config`（多轮对话开关、最大轮数，JSONB）、`welcome_message`、`suggested_questions`（推荐问题，JSONB）、`change_log`、`status`、`gray_config`（灰度配置，JSONB）、`published_at`、`created_at` | 不可变版本，发布时快照所有依赖配置，保证历史版本可复现 |
+| `agent_conversations` | `conversation_id` PK、`agent_id`、`user_id`、`messages`（对话历史，JSONB）、`last_message_at`、`created_at/updated_at` | 多轮对话记忆存储，TTL自动清理7天前的历史 |
+#### 第一期核心能力
+1. 零代码可视化配置：选系统Prompt、勾选需要的Tool/Skill、绑定知识空间、调整模型参数、设置开场白和推荐问题，10分钟配置出可用RAG Agent
+2. 版本管理：发布/回滚/灰度（按流量比例/白名单切流），发布时自动快照所有依赖，底层资产变更不影响线上Agent
+3. 统一`chat`接口：支持流式SSE返回和非流式返回，自动加载对话记忆
+4. 公共Agent模板：内置通用RAG问答模板，一键复制快速创建新Agent
+5. 前端管理页：Agent列表、配置页、版本管理、在线调试台
+#### 复用现有能力
+- 复用现有`app/api/v1/jobs.py`的SSE推送能力实现流式返回
+- 复用现有`llm_client`作为统一模型调用入口
+---
+### 2.6 运行观测中心
+> 全链路运行数据统一采集、展示、排查入口
+#### 核心模型（2张表）
+| 表名 | 核心字段 | 说明 |
+|---|---|---|
+| `agent_runs` | `run_id` PK、`agent_id/version_id`、`conversation_id`、`trigger_type`（api/manual）、`caller_app_id/user_id`、`query`、`answer`、`status`（queued/running/completed/failed）、`token_usage`（JSONB）、`latency_ms`、`error_msg`、`feedback`（1点赞/-1点踩）、`feedback_comment`、`started_at/ended_at` | Agent一次调用主记录 |
+| `agent_run_steps` | `step_id` PK、`run_id` FK、`sequence`（执行顺序）、`step_type`（memory_load/prompt_render/knowledge_search/llm_call/tool_call/skill_call）、`step_name`、`input`（脱敏摘要）、`output`（脱敏摘要）、`latency_ms`、`token_usage`、`success`、`error_msg`、`target_id/target_type/target_version`（调用的资产ID/类型/版本，可跳转）、`created_at` | 执行步骤详情，全链路可追溯 |
+#### 第一期核心能力
+1. 全链路埋点自动采集：所有Prompt/Tool/Skill/Knowledge/LLM调用步骤自动记录，不需要业务手动打日志
+2. 运行列表和详情回放：按Agent/时间/状态筛选，详情页按时间线展示每一步执行情况，点击可跳转对应资产版本
+3. 基础统计看板：Agent调用量、成功率、平均耗时、Token消耗Top排行
+4. 用户反馈收集：对话页点赞/点踩，反馈和Run记录关联
+#### 复用现有能力
+- 复用现有`DbSearchLog`/`DbIngestJob`的日志落库模式
+- 复用现有前端dashboard的统计卡片风格
+---
+## 3. Agent运行时（薄组装层，无状态）
+第一期Runtime极简，不做复杂逻辑，只做流程组装，所有能力调用对应中心接口：
+```mermaid
+graph LR
+A[接收chat请求] --> B[权限/限流校验]
+B --> C[加载对应Agent版本配置快照]
+C --> D[加载多轮对话记忆]
+D --> E[调用Prompt中心渲染系统Prompt，注入时间/用户信息等变量]
+E --> F{是否需要检索知识?}
+F -->|是| G[调用知识中心按绑定空间检索相关知识块，注入上下文]
+F -->|否| H
+G --> H[调用LLM生成响应]
+H --> I{需要调用Tool/Skill?}
+I -->|是| J[调用对应Tool/Skill中心执行，结果返回LLM] --> H
+I -->|否| K[基础敏感词校验]
+K --> L{内容合规?}
+L -->|否| M[返回默认拒答话术]
+L -->|是| N[流式返回最终回答]
+N --> O[异步写入运行日志、更新统计指标、保存对话记忆]
+```
+> 核心原则：Runtime不直接实现任何具体能力，所有能力调用都走对应中心的标准API，新增能力不需要修改Runtime核心逻辑。
+---
+## 4. 分阶段开发计划（从地基开始，6周交付第一期）
+### Phase 0：底座收敛（0.5周，地基阶段）
+#### 核心目标
+梳理现有能力边界，统一公共工具类，为后续开发打基础，不新增业务功能
+#### 开发内容
+1. 统一依赖注入：在现有`app/core/deps.py`中预留六大中心客户端的注入位，和现有组件风格一致
+2. 统一基础工具类：封装Pydantic基类、ID生成工具（雪花ID/UUID）、JSON序列化工具、脱敏工具、时间工具
+3. 统一ORM基类：复用现有`models.py`的`Base`和`_now`时间戳方法，新增通用CRUD仓储基类，避免重复写增删改查代码
+4. 统一异常体系：定义平台统一异常类（权限错误/参数错误/不存在/限流/降级），和现有全局异常处理对接
+5. 梳理现有代码：明确哪些能力直接复用，哪些需要薄封装
+#### 复用现有能力
+- 100%复用现有SQLAlchemy Base、数据库连接、依赖注入体系、全局异常处理
+#### 交付产物
+- 通用基类和工具类代码
+- 依赖注入位预留
+- 现有能力复用清单
+#### 验收标准
+- 现有服务正常启动，不影响现有文档入库、检索、搜索功能
+---
+### Phase 1：Prompt中心核心能力（1周）
+#### 核心目标
+跑通Prompt的创建-发布-渲染-调用最小链路
+#### 开发内容
+1. 数据层：编写`prompt_templates/prompt_versions/prompt_call_logs`三张表的Alembic迁移脚本、ORM模型、仓储类
+2. 后端API：模板/版本CRUD接口、发布/回滚接口、`render`渲染接口、调用记录查询接口
+3. Prompt渲染核心逻辑：变量替换（支持字符串/多轮消息格式）、必填校验、输出Schema自动追加
+4. Python客户端封装：本地内存缓存、自动重试、上下文注入、降级兜底
+5. 前端页面：模板列表页、版本编辑页、在线调试页
+#### 复用现有能力
+- 复用现有`llm/prompts.py`作为兜底内容
+- 复用现有前端组件风格、API请求封装
+#### 交付产物
+- Prompt中心可运行版本
+- 前端基础管理页
+- Python客户端包
+#### 验收场景
+1. 创建一个「门店运营助手系统提示词」模板，编辑v1版本，发布为stable
+2. 调用`prompt_client.render("agent.store_ops.system", variables={"current_date": "2026-07-08"})`成功返回渲染后的内容
+3. 编辑v2版本发布后，调用自动返回v2内容，回滚后自动返回v1内容
+4. 模拟数据库故障，客户端自动返回缓存内容不报错
+---
+### Phase 2：Tool中心核心能力（1周）
+#### 核心目标
+跑通Tool的注册-发布-调用最小链路，支持三类工具
+#### 开发内容
+1. 数据层：`tool_definitions/tool_versions/tool_call_logs`三张表迁移脚本、ORM模型、仓储类
+2. 执行器体系：执行器抽象基类、注册表，实现Python本地执行器（线程池隔离）、HTTP API执行器、MCP stdio执行器（极简版）
+3. `@tool`装饰器实现：自动从函数注解、docstring生成OpenAI Function Schema，服务启动时自动扫描注册
+4. 后端API：工具CRUD接口、版本发布接口、`call`调用接口、调用记录查询接口
+5. 工具调用核心逻辑：参数校验、超时控制、幂等自动重试、熔断降级、异常统一处理
+6. 前端页面：工具列表页、版本编辑页、在线调试页
+#### 复用现有能力
+- 复用现有`parsers/registry.py`注册表模式实现执行器注册
+- 复用现有HTTP客户端、线程池
+#### 交付产物
+- Tool中心可运行版本
+- @tool装饰器
+- 前端管理页
+#### 验收场景
+1. 给现有kb_search函数加`@tool`装饰器，服务启动后自动注册到平台
+2. 手动注册一个HTTP天气查询工具
+3. 配置MCP文件读取工具，手动录入注册
+4. 调用`tool_client.call("kb_search", {"query": "怎么做门店拉新"})`成功返回检索结果
+5. 工具超时/报错时自动返回结构化错误，不抛出异常
+---
+### Phase 3：Skill中心核心能力（1周）
+#### 核心目标
+跑通Skill的注册-发布-调用最小链路，支持代码型多步流程
+#### 开发内容
+1. 数据层：`skill_definitions/skill_versions/skill_call_logs`三张表迁移脚本、ORM模型、仓储类
+2. `@skill`装饰器实现：自动扫描依赖的Prompt/Tool、自动生成Schema，服务启动自动注册
+3. 简单流程调度引擎：支持顺序执行、条件分支，步骤自动调用对应中心接口，记录步骤日志
+4. 后端API：Skill CRUD接口、版本发布接口、`call`调用接口、调用记录查询接口
+5. 前端页面：Skill列表页、版本详情页、调用记录页
+#### 复用现有能力
+- 复用现有`ingestion/pipeline.py`流程执行思路
+- 复用Dramatiq执行长耗时Skill
+#### 交付产物
+- Skill中心可运行版本
+- @skill装饰器
+- 前端管理页
+#### 验收场景
+1. 给现有「Excel自动入库」多步流程加`@skill`装饰器，自动注册到平台，自动识别依赖的kb_search工具
+2. 调用`skill_client.call("excel_auto_ingest", {"file_id": "xxx"})`成功走完入库全流程
+3. 调用日志里可以看到每一步的执行详情、耗时、结果
+---
+### Phase 4：知识空间极简封装 + Agent配置中心（1.5周）
+#### 核心目标
+跑通Agent配置-发布-对话最小链路，第一阶段闭环
+#### 开发内容
+1. 知识空间极简实现：基于现有category字段做映射，实现统一`search_by_space`接口，不需要新建表
+2. 数据层：`agent_definitions/agent_versions/agent_conversations/agent_runs/agent_run_steps`五张表迁移脚本、ORM模型、仓储类
+3. Agent Runtime核心实现：对话流程调度（记忆加载→Prompt渲染→知识检索→LLM调用→工具调用→返回结果）
+4. 后端API：Agent CRUD接口、版本发布/灰度接口、`chat`对话接口（流式SSE+非流式）、运行记录接口
+5. 依赖校验：Agent发布时自动检查绑定的Prompt/Tool/Skill/知识空间是否存在、有权限
+6. 前端页面：Agent配置页（选Prompt/勾工具/绑知识空间/调模型参数）、对话调试页、运行列表页、运行详情回放页
+7. 多轮对话记忆：基于`agent_conversations`表实现上下文自动加载和保存，7天自动过期
+#### 复用现有能力
+- 100%复用现有`retrieval/pipeline.py`检索能力
+- 复用现有`jobs.py`SSE能力实现流式返回
+- 复用现有`llm_client`做模型调用
+#### 交付产物
+- Agent可运行版本
+- 零代码配置页
+- 运行观测基础能力
+#### 验收场景
+1. 10分钟配置出「门店运营助手」：绑定系统Prompt、kb_search工具、门店运营知识空间、doubao-pro模型
+2. 调用chat接口问「怎么做门店拉新」，正确检索知识返回回答，支持流式返回打字机效果
+3. 运行详情页可以看到完整执行链路：加载记忆→渲染Prompt→检索知识→LLM调用→返回结果，点击可跳转对应Prompt/Tool版本
+4. 多轮对话上下文生效，第二轮问「那怎么做会员运营」时不需要重复上下文
+5. 发布v2版本配置20%灰度，请求按比例命中v2版本，一键回滚到v1立刻生效
+---
+### Phase 5：前端体验完善 + 测试 + 文档（1周）
+#### 核心目标
+优化体验，修复bug，输出文档，达到生产可用标准
+#### 开发内容
+1. 前端页面交互优化：统一导航、权限控制（管理员/普通用户两级）、表单校验、错误提示
+2. 基础统计看板：复用现有dashboard风格，展示Agent数量、总调用量、成功率、平均耗时等核心指标
+3. 全链路测试：单元测试、接口测试、集成测试，覆盖核心流程
+4. 接入文档编写：API文档、SDK使用文档、Agent配置指南
+5. 基础限流、敏感词校验能力
+#### 交付产物
+- 生产可用的第一期版本
+- 完整接入文档
+- 测试用例覆盖核心流程
+#### 验收标准
+- 所有核心流程无阻塞bug，性能达标（单Agent对话响应时间<3s）
+- 文档清晰，新用户可以根据文档10分钟配置出可用Agent
+---
+## 5. 兼容与迁移方案
+1. **零侵入纳管**：现有工具/流程只需要加`@tool`/`@skill`装饰器即可自动注册到平台，不需要修改原有业务逻辑
+2. **渐进式迁移**：新开发的Agent统一走平台，存量业务可以继续使用原有逻辑，逐步替换，不需要一次性重构
+3. **部署兼容**：第一期所有API直接挂载到现有FastAPI服务的`/api/v1/platform/`路径下，和现有documents/search/jobs接口同进程运行，不需要额外部署服务，运维成本为0
+4. **平滑升级**：后续功能迭代通过新增接口实现，不修改第一期核心接口，业务代码不需要跟随升级
+---
+## 6. 第一期最小闭环总体验收标准
+1. 所有代码基于现有技术栈开发，核心组件100%复用，无额外中间件依赖
+2. 6周内开发完成，不延期，交付后可直接上线使用
+3. 新用户可以在10分钟内零代码配置出一个可用的RAG Agent，具备对话、知识检索、工具调用能力
+4. 每一次Agent调用全链路可追溯，运行详情可以看到每一步执行情况
+5. 版本发布、灰度、回滚操作一键完成，不需要改代码发版
+6. 公共Prompt/Tool/Skill一次发布，所有Agent可以复用，不需要重复开发
+---
+## 7. 后续迭代方向（第一期交付后按需规划）
+第一期交付后根据实际业务需求逐步迭代，不提前做过度设计：
+1. 第2-3个月：MCP自动发现、简单评测能力、基础权限优化、用户反馈分析
+2. 第3-6个月：工作流编排、多渠道接入、多模型路由、成本统计
+3. 6个月后：人工转接、开放生态、高级治理能力
