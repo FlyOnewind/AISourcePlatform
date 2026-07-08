@@ -1,0 +1,61 @@
+# ── 本地开发工具 ──────────────────────────────────────────────
+/.agent/
+/.claude/
+/.codegraph/
+.playwright-cli/
+backend/.playwright-cli/
+
+# ── 环境变量与敏感配置 ──────────────────────────────────────
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# ── Python 缓存与构建产物 ────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# ── Python 虚拟环境 ───────────────────────────────────────────
+.venv/
+venv/
+
+# ── 编辑器与操作系统 ─────────────────────────────────────────
+.vscode/
+.idea/
+.obsidian/
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ── 运行时数据 ───────────────────────────────────────────────
+/data/
+data/
+*.log
+
+# ── 测试产物 ─────────────────────────────────────────────────
+test_e2e_report.*
+/playwright-report/
+/test-results/
+/backend/tests/results/
+/backend/tests/fixtures/generated_inputs/
+evaluation/datasets/
+evaluation/results/
+
+# ── 开发文档（本地撰写，不入库）─────────────────────────────
+docs/
+openspec/
+todo/
+全链路流程分析.md
+CLAUDE.md
+KNOWLEDGE_BASE_DEVELOPMENT.md
+evaluation/tests/
+backend/tests/
