@@ -1,6 +1,9 @@
 """知识资产API：知识库管理、文档上传、检索/问答，对应文档11 3.3。"""
+import uuid
+
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
-from sqlalchemy import select
+from sqlalchemy import or_, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import Identity, get_current_identity, get_trace_id, require_admin_roles
@@ -36,6 +39,23 @@ def _kb_out(kb: KnowledgeBase) -> KnowledgeBaseOut:
     )
 
 
+async def _resolve_kb(db: AsyncSession, kb_ref: str) -> KnowledgeBase | None:
+    """兼容三种知识库标识：UUID / kb_key / name，避免前端传错类型导致 500。"""
+    try:
+        kb_uuid = uuid.UUID(kb_ref)
+        result = await db.execute(select(KnowledgeBase).where(KnowledgeBase.id == kb_uuid))
+        kb = result.scalar_one_or_none()
+        if kb is not None:
+            return kb
+    except ValueError:
+        pass
+
+    result = await db.execute(
+        select(KnowledgeBase).where(or_(KnowledgeBase.kb_key == kb_ref, KnowledgeBase.name == kb_ref))
+    )
+    return result.scalars().first()
+
+
 @router.post("/api/v1/knowledge-bases")
 async def create_kb(
     payload: KnowledgeBaseCreate,
@@ -54,6 +74,11 @@ async def create_kb(
 
 @router.get("/api/v1/knowledge-bases")
 async def list_kbs(db: AsyncSession = Depends(get_db), identity: Identity = Depends(get_current_identity)):
+    if identity.actor_type == "admin_user" and identity.role in ("platform_admin", "knowledge_admin"):
+        result = await db.execute(select(KnowledgeBase))
+        kbs = result.scalars().all()
+        return ok([_kb_out(kb).model_dump() for kb in kbs])
+
     subject = Subject(agent_role=identity.role, business_domain=identity.business_domain)
     policy = PolicyService(db)
     result = await db.execute(select(KnowledgeBase))
@@ -70,8 +95,7 @@ async def list_kbs(db: AsyncSession = Depends(get_db), identity: Identity = Depe
 
 @router.get("/api/v1/knowledge-bases/{kb_id}")
 async def get_kb(kb_id: str, db: AsyncSession = Depends(get_db), identity: Identity = Depends(get_current_identity)):
-    result = await db.execute(select(KnowledgeBase).where(KnowledgeBase.id == kb_id))
-    kb = result.scalar_one_or_none()
+    kb = await _resolve_kb(db, kb_id)
     if kb is None:
         raise HTTPException(status_code=404, detail={"code": "404001", "message": "知识库不存在"})
     return ok(_kb_out(kb).model_dump())
@@ -84,17 +108,24 @@ async def upload_document(
     db: AsyncSession = Depends(get_db),
     identity: Identity = Depends(require_admin_roles("platform_admin", "knowledge_admin")),
 ):
-    result = await db.execute(select(KnowledgeBase).where(KnowledgeBase.id == kb_id))
-    kb = result.scalar_one_or_none()
+    kb = await _resolve_kb(db, kb_id)
     if kb is None:
-        raise HTTPException(status_code=404, detail={"code": "404001", "message": "知识库不存在"})
+        raise HTTPException(status_code=404, detail={"code": "404001", "message": "知识库不存在（请传 UUID 或 kb_key）"})
 
     content = await file.read()
     service = KnowledgeService(db, get_llm_provider())
-    doc = await service.upload_document(kb, file.filename or "unnamed", content, security_level=kb.security_level)
-    await db.commit()
-    await db.refresh(doc)
-    chunk_count = await service.get_chunk_count(doc.id)
+    try:
+        doc = await service.upload_document(kb, file.filename or "unnamed", content, security_level=kb.security_level)
+        await db.commit()
+        await db.refresh(doc)
+        chunk_count = await service.get_chunk_count(doc.id)
+    except SQLAlchemyError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail={"code": "500002", "message": f"数据库写入失败: {exc.__class__.__name__}"}) from None
+    except Exception as exc:  # noqa: BLE001
+        await db.rollback()
+        raise HTTPException(status_code=500, detail={"code": "500001", "message": f"文档上传失败: {exc}"}) from None
+
     return ok(
         DocumentOut(
             id=str(doc.id), kb_id=str(doc.kb_id), title=doc.title, source_type=doc.source_type,
@@ -106,7 +137,11 @@ async def upload_document(
 
 @router.get("/api/v1/knowledge-bases/{kb_id}/documents")
 async def list_documents(kb_id: str, db: AsyncSession = Depends(get_db), identity: Identity = Depends(get_current_identity)):
-    result = await db.execute(select(Document).where(Document.kb_id == kb_id))
+    kb = await _resolve_kb(db, kb_id)
+    if kb is None:
+        raise HTTPException(status_code=404, detail={"code": "404001", "message": "知识库不存在"})
+
+    result = await db.execute(select(Document).where(Document.kb_id == kb.id))
     docs = result.scalars().all()
     service = KnowledgeService(db, get_llm_provider())
     out = []

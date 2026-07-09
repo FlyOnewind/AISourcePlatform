@@ -57,6 +57,18 @@
 
     <section id="page-knowledge" class="page">
       <h2>知识库管理</h2>
+      <div class="toolbar">
+        <input id="kb-create-key" type="text" placeholder="kb_key（如 kb_ops）" />
+        <input id="kb-create-name" type="text" placeholder="知识库名称" />
+        <input id="kb-create-domain" type="text" placeholder="业务域（可选）" />
+        <select id="kb-create-security">
+          <option value="public">public</option>
+          <option value="internal" selected>internal</option>
+          <option value="confidential">confidential</option>
+          <option value="restricted">restricted</option>
+        </select>
+        <button id="kb-create-btn">新建知识库</button>
+      </div>
       <table class="data-table">
         <thead><tr><th>名称</th><th>Key</th><th>业务域</th><th>密级</th><th>状态</th><th>操作</th></tr></thead>
         <tbody id="kb-table-body"></tbody>
@@ -64,7 +76,9 @@
       <h3>文档列表</h3>
       <p class="hint">点击上方知识库行查看其文档，或直接上传文档到指定知识库：</p>
       <div class="toolbar">
-        <input id="upload-kb-id" type="text" placeholder="知识库ID" />
+        <select id="upload-kb-id">
+          <option value="">请选择知识库</option>
+        </select>
         <input id="upload-file" type="file" />
         <button id="upload-btn">上传文档</button>
       </div>

@@ -114,9 +114,14 @@ document.getElementById("cap-type-filter").addEventListener("change", loadCapabi
 // ---- Knowledge ----
 async function loadKnowledgeBases() {
   const tbody = document.getElementById("kb-table-body");
+  const kbSelect = document.getElementById("upload-kb-id");
   tbody.innerHTML = "<tr><td colspan='6'>加载中...</td></tr>";
   try {
     const kbs = await apiFetch("/api/v1/knowledge-bases");
+    kbSelect.innerHTML = [
+      '<option value="">请选择知识库</option>',
+      ...kbs.map((kb) => `<option value="${kb.id}">${kb.name} (${kb.kb_key})</option>`),
+    ].join("");
     tbody.innerHTML = kbs.map((kb) => `
       <tr data-kb-id="${kb.id}">
         <td>${kb.name}</td><td>${kb.kb_key}</td><td>${kb.business_domain || "-"}</td>
@@ -124,9 +129,41 @@ async function loadKnowledgeBases() {
         <td><button onclick="loadDocuments('${kb.id}')">查看文档</button></td>
       </tr>`).join("") || "<tr><td colspan='6'>暂无数据</td></tr>";
   } catch (e) {
+    kbSelect.innerHTML = '<option value="">请选择知识库</option>';
     tbody.innerHTML = `<tr><td colspan='6' style="color:var(--danger)">${e.message}</td></tr>`;
   }
 }
+
+document.getElementById("kb-create-btn").addEventListener("click", async () => {
+  const kbKey = document.getElementById("kb-create-key").value.trim();
+  const kbName = document.getElementById("kb-create-name").value.trim();
+  const kbDomain = document.getElementById("kb-create-domain").value.trim();
+  const kbSecurity = document.getElementById("kb-create-security").value;
+
+  if (!kbKey || !kbName) {
+    alert("请填写 kb_key 和知识库名称");
+    return;
+  }
+
+  try {
+    await apiFetch("/api/v1/knowledge-bases", {
+      method: "POST",
+      body: JSON.stringify({
+        kb_key: kbKey,
+        name: kbName,
+        business_domain: kbDomain || null,
+        security_level: kbSecurity,
+      }),
+    });
+    document.getElementById("kb-create-key").value = "";
+    document.getElementById("kb-create-name").value = "";
+    document.getElementById("kb-create-domain").value = "";
+    alert("知识库创建成功");
+    loadKnowledgeBases();
+  } catch (e) {
+    alert("知识库创建失败: " + e.message);
+  }
+});
 
 async function loadDocuments(kbId) {
   document.getElementById("upload-kb-id").value = kbId;
