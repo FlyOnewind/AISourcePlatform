@@ -44,6 +44,19 @@ class CapabilityOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class CapabilityDetailOut(CapabilityOut):
+    scenarios: list[str]
+    examples: list[Any]
+    owner_user: str | None = None
+    allowed_agent_roles: list[str] = Field(default_factory=list)
+    endpoint: str | None = None
+    timeout_ms: int = 30000
+    side_effect: str = "read_only"
+    ref_id: str | None = None
+    current_version: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class CapabilitySearchRequest(BaseModel):
     task: str
     keywords: list[str] = Field(default_factory=list)
@@ -104,3 +117,23 @@ class CapabilityInvokeResponse(BaseModel):
 class PublishRequest(BaseModel):
     version: str | None = None
     release_notes: str | None = None
+
+
+class CapabilityPermissionCreate(BaseModel):
+    subject_type: str
+    subject_code: str
+    permission: str
+    conditions: dict[str, Any] = Field(default_factory=dict)
+    status: str = "active"
+
+
+class CapabilityPermissionOut(BaseModel):
+    id: str
+    capability_id: str
+    subject_type: str
+    subject_code: str
+    permission: str
+    conditions: dict[str, Any]
+    status: str
+
+    model_config = {"from_attributes": True}

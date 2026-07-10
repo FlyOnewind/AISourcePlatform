@@ -24,6 +24,13 @@ class KnowledgeBaseOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class KnowledgeBaseDetailOut(KnowledgeBaseOut):
+    owner_department: str | None = None
+    retrieval_config: dict[str, Any] = Field(default_factory=dict)
+    document_count: int = 0
+    chunk_count: int = 0
+
+
 class DocumentOut(BaseModel):
     id: str
     kb_id: str
@@ -35,6 +42,13 @@ class DocumentOut(BaseModel):
     chunk_count: int = 0
 
     model_config = {"from_attributes": True}
+
+
+class DocumentDetailOut(DocumentOut):
+    source_uri: str | None = None
+    object_uri: str | None = None
+    parse_error: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class KnowledgeSearchRequest(BaseModel):

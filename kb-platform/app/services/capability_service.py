@@ -9,6 +9,7 @@ from app.models.agent import Agent
 from app.models.capability import Capability
 from app.models.knowledge import KnowledgeBase
 from app.models.skill import PromptTemplate, Skill
+from app.services.capability_permission_service import CapabilityPermissionService
 from app.services.llm.base import LLMProvider
 from app.services.policy_service import PolicyService, Resource, Subject
 from app.services.prompt_service import PromptRenderError, render_prompt
@@ -31,6 +32,7 @@ class CapabilityService:
         self._db = db
         self._llm = llm
         self._policy = PolicyService(db)
+        self._capability_permissions = CapabilityPermissionService(db)
 
     async def _visible_capabilities(self, requester: Subject) -> list[Capability]:
         result = await self._db.execute(select(Capability).where(Capability.status.in_(["published", "gray"])))
@@ -38,6 +40,13 @@ class CapabilityService:
         visible = []
         for cap in capabilities:
             if cap.allowed_agent_roles and requester.agent_role not in cap.allowed_agent_roles and requester.agent_role != "master_agent":
+                continue
+            perm_subject = CapabilityPermissionService.from_role(requester.agent_role, requester.business_domain, requester.department)
+            perm_allowed, perm_reason = await self._capability_permissions.evaluate(perm_subject, cap, "discover")
+            if perm_allowed is False:
+                continue
+            if perm_allowed is True:
+                visible.append(cap)
                 continue
             allowed, _ = await self._policy.evaluate(
                 requester,

@@ -2,7 +2,9 @@
 from app.models.agent import AdminUser, Agent
 from app.models.approval import ApprovalTicket
 from app.models.audit import AuditLog
+from app.models.asset import AssetCandidate, CollaborationTask
 from app.models.capability import Capability, CapabilityVersion
+from app.models.capability_permission import CapabilityPermission
 from app.models.knowledge import Document, KnowledgeBase, KnowledgeChunk
 from app.models.policy import Policy
 from app.models.skill import PromptTemplate, Skill
@@ -12,8 +14,11 @@ __all__ = [
     "AdminUser",
     "ApprovalTicket",
     "AuditLog",
+    "AssetCandidate",
     "Capability",
     "CapabilityVersion",
+    "CapabilityPermission",
+    "CollaborationTask",
     "Document",
     "KnowledgeBase",
     "KnowledgeChunk",

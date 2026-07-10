@@ -1,114 +1,853 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>AI知识库管理中台 - 管理后台</title>
-<link rel="stylesheet" href="style.css" />
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI知识库管理中台 - 管理后台</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
 <body>
-<div id="login-view" class="login-view">
-  <div class="login-card">
-    <h1>AI知识库管理中台</h1>
-    <p class="subtitle">管理后台（V1 本地演示版）</p>
-    <input id="api-key-input" type="text" placeholder="输入管理员 API Key（seed 脚本输出中的 admin_user）" />
-    <button id="login-btn">登录</button>
-    <p class="hint">提示：运行 `uv run python -m app.seeds.seed_data` 后，从控制台输出复制 admin 的 API Key。</p>
+  <!-- 登录视图 -->
+  <div id="login-view" class="login-view">
+    <div class="login-card">
+      <div class="login-logo">
+        <div class="login-logo-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+          </svg>
+        </div>
+        <h1 class="login-title">AI知识库管理中台</h1>
+        <p class="login-subtitle">企业级AI资产统一治理平台</p>
+      </div>
+
+      <form class="login-form" id="login-form">
+        <div class="form-group">
+          <label class="form-label" for="api-key-input">API Key</label>
+          <input type="text" id="api-key-input" class="input" placeholder="请输入管理员 API Key">
+        </div>
+
+        <div class="checkbox-group">
+          <input type="checkbox" id="remember-key" class="checkbox" checked>
+          <label for="remember-key" class="checkbox-label">记住 API Key</label>
+        </div>
+
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary btn-lg" id="login-btn">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1" />
+            </svg>
+            登录
+          </button>
+        </div>
+      </form>
+
+      <div class="form-footer">
+        <p class="form-footer-text">
+          提示：运行 <code>uv run python -m app.seeds.seed_data</code> 后，<br>
+          从控制台输出复制 admin 的 API Key
+        </p>
+      </div>
+    </div>
   </div>
-</div>
 
-<div id="app-view" class="app-view hidden">
-  <nav class="sidebar">
-    <div class="brand">AI知识库中台</div>
-    <ul class="nav-list">
-      <li data-page="overview" class="active">总览</li>
-      <li data-page="capabilities">能力目录</li>
-      <li data-page="knowledge">知识库</li>
-      <li data-page="agents">Agent管理</li>
-      <li data-page="audit">审计日志</li>
-    </ul>
-    <button id="logout-btn">退出登录</button>
-  </nav>
-
-  <main class="content">
-    <section id="page-overview" class="page active">
-      <h2>系统总览</h2>
-      <div id="overview-cards" class="cards"></div>
-    </section>
-
-    <section id="page-capabilities" class="page">
-      <h2>能力目录</h2>
-      <div class="toolbar">
-        <select id="cap-type-filter">
-          <option value="">全部类型</option>
-          <option value="knowledge_base">知识库</option>
-          <option value="tool">工具</option>
-          <option value="skill">Skill</option>
-          <option value="prompt">Prompt</option>
-          <option value="agent">Agent</option>
-        </select>
-        <button id="cap-refresh-btn">刷新</button>
+  <!-- 主应用视图 -->
+  <div id="app-view" class="app-view hidden">
+    <!-- 侧边栏 -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <div class="sidebar-logo">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+          </svg>
+        </div>
+        <div class="sidebar-brand">
+          <div class="sidebar-brand-name">AI知识库中台</div>
+          <div class="sidebar-brand-version">v1.0</div>
+        </div>
+        <button class="sidebar-toggle" id="sidebar-toggle" title="折叠侧边栏">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
+          </svg>
+        </button>
       </div>
-      <table class="data-table">
-        <thead><tr><th>名称</th><th>类型</th><th>业务域</th><th>状态</th><th>版本</th><th>密级</th></tr></thead>
-        <tbody id="cap-table-body"></tbody>
-      </table>
-    </section>
 
-    <section id="page-knowledge" class="page">
-      <h2>知识库管理</h2>
-      <div class="toolbar">
-        <input id="kb-create-key" type="text" placeholder="kb_key（如 kb_ops）" />
-        <input id="kb-create-name" type="text" placeholder="知识库名称" />
-        <input id="kb-create-domain" type="text" placeholder="业务域（可选）" />
-        <select id="kb-create-security">
-          <option value="public">public</option>
-          <option value="internal" selected>internal</option>
-          <option value="confidential">confidential</option>
-          <option value="restricted">restricted</option>
-        </select>
-        <button id="kb-create-btn">新建知识库</button>
+      <nav class="sidebar-nav">
+        <!-- 仪表盘分组 -->
+        <div class="nav-group">
+          <div class="nav-group-label">仪表盘</div>
+          <ul class="nav-list">
+            <li class="nav-item">
+              <button class="nav-link active" data-page="overview">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+                </svg>
+                <span class="nav-link-text">系统总览</span>
+              </button>
+            </li>
+          </ul>
+        </div>
+
+        <!-- 资产管理分组 -->
+        <div class="nav-group">
+          <div class="nav-group-label">资产管理</div>
+          <ul class="nav-list">
+            <li class="nav-item">
+              <button class="nav-link" data-page="capabilities">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
+                </svg>
+                <span class="nav-link-text">能力目录</span>
+              </button>
+            </li>
+            <li class="nav-item">
+              <button class="nav-link" data-page="skills">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                <span class="nav-link-text">Skills</span>
+              </button>
+            </li>
+            <li class="nav-item">
+              <button class="nav-link" data-page="prompts">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                </svg>
+                <span class="nav-link-text">Prompts</span>
+              </button>
+            </li>
+            <li class="nav-item">
+              <button class="nav-link" data-page="knowledge">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                </svg>
+                <span class="nav-link-text">知识库</span>
+              </button>
+            </li>
+            <li class="nav-item">
+              <button class="nav-link" data-page="agents">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                </svg>
+                <span class="nav-link-text">Agent管理</span>
+              </button>
+            </li>
+          </ul>
+        </div>
+
+        <!-- 集成与审计分组 -->
+        <div class="nav-group">
+          <div class="nav-group-label">集成与审计</div>
+          <ul class="nav-list">
+            <li class="nav-item">
+              <button class="nav-link" data-page="integration">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z" />
+                </svg>
+                <span class="nav-link-text">集成管理</span>
+              </button>
+            </li>
+            <li class="nav-item">
+              <button class="nav-link" data-page="audit">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+                </svg>
+                <span class="nav-link-text">审计日志</span>
+              </button>
+            </li>
+          </ul>
+        </div>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="user-profile">
+          <div class="user-avatar">A</div>
+          <div class="user-info">
+            <div class="user-name">Admin</div>
+            <div class="user-role">管理员</div>
+          </div>
+        </div>
+        <button class="btn btn-ghost" id="logout-btn" style="width: 100%;">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+          </svg>
+          <span class="nav-link-text">退出登录</span>
+        </button>
       </div>
-      <table class="data-table">
-        <thead><tr><th>名称</th><th>Key</th><th>业务域</th><th>密级</th><th>状态</th><th>操作</th></tr></thead>
-        <tbody id="kb-table-body"></tbody>
-      </table>
-      <h3>文档列表</h3>
-      <p class="hint">点击上方知识库行查看其文档，或直接上传文档到指定知识库：</p>
-      <div class="toolbar">
-        <select id="upload-kb-id">
-          <option value="">请选择知识库</option>
-        </select>
-        <input id="upload-file" type="file" />
-        <button id="upload-btn">上传文档</button>
+    </aside>
+
+    <!-- 主内容区 -->
+    <div class="main-content">
+      <!-- 顶部导航栏 -->
+      <header class="top-header">
+        <div class="header-left">
+          <button class="header-menu-btn" id="mobile-menu-btn">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+          </button>
+          <div class="search-box">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            <input type="text" class="input" placeholder="全局搜索..." id="global-search">
+          </div>
+        </div>
+        <div class="header-right">
+          <div class="header-actions">
+            <button class="header-action-btn" title="通知">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+              </svg>
+              <span class="badge-dot"></span>
+            </button>
+            <button class="header-action-btn" title="帮助">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <!-- 内容区域 -->
+      <main class="content">
+        <!-- 系统总览页面 -->
+        <section id="page-overview" class="page active">
+          <div class="page-header">
+            <h1 class="page-header-title">系统总览</h1>
+            <p class="page-header-description">查看平台核心指标和运行状态</p>
+          </div>
+
+          <!-- 统计卡片 -->
+          <div class="overview-grid" id="overview-cards">
+            <!-- 动态生成 -->
+          </div>
+
+          <!-- 图表区域 -->
+          <div class="overview-grid" style="grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));">
+            <div class="chart-container">
+              <div class="chart-header">
+                <h3 class="chart-title">调用趋势</h3>
+                <div class="toolbar-right">
+                  <select class="select" style="width: auto;">
+                    <option>最近24小时</option>
+                    <option>最近7天</option>
+                    <option>最近30天</option>
+                  </select>
+                </div>
+              </div>
+              <div class="chart-wrapper">
+                <canvas id="invocation-chart"></canvas>
+              </div>
+            </div>
+
+            <div class="chart-container">
+              <div class="chart-header">
+                <h3 class="chart-title">资产分布</h3>
+              </div>
+              <div class="chart-wrapper">
+                <canvas id="assets-chart"></canvas>
+              </div>
+            </div>
+          </div>
+
+          <!-- 快捷操作 -->
+          <div class="overview-section">
+            <div class="overview-section-header">
+              <h3 class="overview-section-title">快捷操作</h3>
+            </div>
+            <div class="quick-actions">
+              <div class="quick-action-card" onclick="navigateToPage('capabilities')">
+                <div class="quick-action-icon">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                  </svg>
+                </div>
+                <div class="quick-action-label">创建能力</div>
+              </div>
+              <div class="quick-action-card" onclick="navigateToPage('knowledge')">
+                <div class="quick-action-icon">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                  </svg>
+                </div>
+                <div class="quick-action-label">新建知识库</div>
+              </div>
+              <div class="quick-action-card" onclick="navigateToPage('skills')">
+                <div class="quick-action-icon">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                </div>
+                <div class="quick-action-label">添加Skill</div>
+              </div>
+              <div class="quick-action-card" onclick="navigateToPage('audit')">
+                <div class="quick-action-icon">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                  </svg>
+                </div>
+                <div class="quick-action-label">查看日志</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 能力目录页面 -->
+        <section id="page-capabilities" class="page">
+          <div class="page-header">
+            <h1 class="page-header-title">能力目录</h1>
+            <p class="page-header-description">管理和发现平台可用的AI能力</p>
+          </div>
+
+          <div class="toolbar">
+            <div class="toolbar-left">
+              <div class="search-box" style="max-width: 280px;">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+                <input type="text" class="input" placeholder="搜索能力..." id="cap-search">
+              </div>
+              <select class="select" id="cap-type-filter" style="width: auto;">
+                <option value="">全部类型</option>
+                <option value="knowledge_base">知识库</option>
+                <option value="tool">工具</option>
+                <option value="skill">Skill</option>
+                <option value="prompt">Prompt</option>
+                <option value="agent">Agent</option>
+              </select>
+              <select class="select" id="cap-status-filter" style="width: auto;">
+                <option value="">全部状态</option>
+                <option value="published">已发布</option>
+                <option value="draft">草稿</option>
+                <option value="disabled">已禁用</option>
+              </select>
+            </div>
+            <div class="toolbar-right">
+              <div class="view-toggle">
+                <button class="active" data-view="table" title="表格视图">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+                  </svg>
+                </button>
+                <button data-view="grid" title="卡片视图">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+                  </svg>
+                </button>
+              </div>
+              <button class="btn btn-secondary" id="cap-refresh-btn">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                刷新
+              </button>
+              <button class="btn btn-primary" id="cap-create-btn">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                </svg>
+                创建能力
+              </button>
+            </div>
+          </div>
+
+          <!-- 表格视图 -->
+          <div class="table-container" id="cap-table-view">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>名称</th>
+                  <th>类型</th>
+                  <th>业务域</th>
+                  <th>状态</th>
+                  <th>版本</th>
+                  <th>密级</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="cap-table-body">
+                <!-- 动态生成 -->
+              </tbody>
+            </table>
+          </div>
+
+          <!-- 网格视图 -->
+          <div class="grid-view hidden" id="cap-grid-view">
+            <!-- 动态生成 -->
+          </div>
+        </section>
+
+        <!-- Skills页面 -->
+        <section id="page-skills" class="page">
+          <div class="page-header">
+            <h1 class="page-header-title">Skills</h1>
+            <p class="page-header-description">管理可复用的AI技能</p>
+          </div>
+
+          <div class="toolbar">
+            <div class="toolbar-left">
+              <div class="search-box" style="max-width: 280px;">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+                <input type="text" class="input" placeholder="搜索Skills...">
+              </div>
+              <select class="select" style="width: auto;">
+                <option value="">全部类型</option>
+                <option value="text_generation">文本生成</option>
+                <option value="classification">分类</option>
+                <option value="extraction">信息提取</option>
+              </select>
+            </div>
+            <div class="toolbar-right">
+              <div class="view-toggle">
+                <button class="active" data-view="table">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+                  </svg>
+                </button>
+                <button data-view="grid">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+                  </svg>
+                </button>
+              </div>
+              <button class="btn btn-primary">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                </svg>
+                添加Skill
+              </button>
+            </div>
+          </div>
+
+          <div class="table-container">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>名称</th>
+                  <th>Key</th>
+                  <th>类型</th>
+                  <th>状态</th>
+                  <th>版本</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="skill-table-body">
+                <!-- 动态生成 -->
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- Prompts页面 -->
+        <section id="page-prompts" class="page">
+          <div class="page-header">
+            <h1 class="page-header-title">Prompts</h1>
+            <p class="page-header-description">管理Prompt模板库</p>
+          </div>
+
+          <div class="toolbar">
+            <div class="toolbar-left">
+              <div class="search-box" style="max-width: 280px;">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+                <input type="text" class="input" placeholder="搜索Prompts...">
+              </div>
+              <select class="select" style="width: auto;">
+                <option value="">全部状态</option>
+                <option value="published">已发布</option>
+                <option value="draft">草稿</option>
+              </select>
+            </div>
+            <div class="toolbar-right">
+              <button class="btn btn-primary">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                </svg>
+                创建Prompt
+              </button>
+            </div>
+          </div>
+
+          <div class="table-container">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>名称</th>
+                  <th>Key</th>
+                  <th>状态</th>
+                  <th>版本</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="prompt-table-body">
+                <!-- 动态生成 -->
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- 知识库页面 -->
+        <section id="page-knowledge" class="page">
+          <div class="page-header">
+            <h1 class="page-header-title">知识库</h1>
+            <p class="page-header-description">管理知识库和文档</p>
+          </div>
+
+          <!-- 知识库列表 -->
+          <div class="toolbar">
+            <div class="toolbar-left">
+              <div class="search-box" style="max-width: 280px;">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+                <input type="text" class="input" placeholder="搜索知识库...">
+              </div>
+            </div>
+            <div class="toolbar-right">
+              <button class="btn btn-primary" id="kb-create-form-toggle">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                </svg>
+                新建知识库
+              </button>
+            </div>
+          </div>
+
+          <!-- 创建知识库表单 -->
+          <div class="card hidden" id="kb-create-form" style="margin-bottom: var(--spacing-lg);">
+            <div class="card-header">
+              <h3 class="card-title">创建新知识库</h3>
+            </div>
+            <div class="card-body" style="padding: 0;">
+              <div class="input-group" style="margin-bottom: var(--spacing-md);">
+                <input type="text" id="kb-create-key" class="input" placeholder="知识库 Key (如: kb_ops)">
+                <input type="text" id="kb-create-name" class="input" placeholder="知识库名称">
+                <input type="text" id="kb-create-domain" class="input" placeholder="业务域 (可选)">
+                <select id="kb-create-security" class="select" style="width: 200px;">
+                  <option value="public">公开</option>
+                  <option value="internal" selected>内部</option>
+                  <option value="confidential">机密</option>
+                  <option value="restricted">受限</option>
+                </select>
+                <button class="btn btn-primary" id="kb-create-btn">创建</button>
+                <button class="btn btn-secondary" id="kb-create-cancel">取消</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="grid-view" id="kb-grid-view" style="grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));">
+            <!-- 动态生成 -->
+          </div>
+
+          <!-- 文档列表 (选中知识库后显示) -->
+          <div id="doc-section" class="hidden" style="margin-top: var(--spacing-xl);">
+            <div class="page-header">
+              <h2 class="page-header-title">文档列表</h2>
+              <p class="page-header-description" id="doc-section-desc">管理选中知识库中的文档</p>
+            </div>
+
+            <div class="toolbar">
+              <div class="toolbar-left">
+                <div class="search-box" style="max-width: 280px;">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </svg>
+                  <input type="text" class="input" placeholder="搜索文档...">
+                </div>
+                <select class="select" style="width: auto;">
+                  <option value="">全部状态</option>
+                  <option value="pending">待处理</option>
+                  <option value="processed">已处理</option>
+                  <option value="published">已发布</option>
+                  <option value="error">错误</option>
+                </select>
+              </div>
+              <div class="toolbar-right">
+                <button class="btn btn-primary" id="upload-toggle-btn">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                  </svg>
+                  上传文档
+                </button>
+              </div>
+            </div>
+
+            <!-- 上传区域 -->
+            <div class="card hidden" id="upload-section" style="margin-bottom: var(--spacing-lg);">
+              <div class="dropzone" id="dropzone">
+                <div class="dropzone-icon">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                  </svg>
+                </div>
+                <p class="dropzone-text">拖拽文件到这里，或点击上传</p>
+                <p class="dropzone-hint">支持 PDF、Word、Markdown、TXT 等格式</p>
+                <input type="file" id="upload-file" style="display: none;" multiple>
+              </div>
+              <div class="card-footer" style="display: flex; justify-content: flex-end; gap: var(--spacing-sm);">
+                <button class="btn btn-secondary" id="upload-cancel">取消</button>
+                <button class="btn btn-primary" id="upload-btn">上传</button>
+              </div>
+            </div>
+
+            <div class="table-container">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>文件名</th>
+                    <th>解析状态</th>
+                    <th>切片数</th>
+                    <th>版本</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="doc-table-body">
+                  <!-- 动态生成 -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- Agent管理页面 -->
+        <section id="page-agents" class="page">
+          <div class="page-header">
+            <h1 class="page-header-title">Agent管理</h1>
+            <p class="page-header-description">管理平台中的AI Agent</p>
+          </div>
+
+          <div class="toolbar">
+            <div class="toolbar-left">
+              <div class="search-box" style="max-width: 280px;">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+                <input type="text" class="input" placeholder="搜索Agent...">
+              </div>
+              <select class="select" style="width: auto;">
+                <option value="">全部状态</option>
+                <option value="active">活跃</option>
+                <option value="inactive">停用</option>
+              </select>
+            </div>
+            <div class="toolbar-right">
+              <button class="btn btn-primary">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                </svg>
+                创建Agent
+              </button>
+            </div>
+          </div>
+
+          <div class="grid-view" id="agents-grid-view" style="grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));">
+            <!-- 动态生成 -->
+          </div>
+        </section>
+
+        <!-- 集成管理页面 -->
+        <section id="page-integration" class="page">
+          <div class="page-header">
+            <h1 class="page-header-title">集成管理</h1>
+            <p class="page-header-description">管理资产候选和协作任务</p>
+          </div>
+
+          <!-- 标签页导航 -->
+          <div class="toolbar" style="border-bottom: 1px solid var(--border-subtle); padding-bottom: var(--spacing-lg);">
+            <div class="toolbar-left">
+              <div class="filter-group" id="integration-tabs">
+                <button class="btn btn-secondary active" data-tab="candidates">资产候选</button>
+                <button class="btn btn-secondary" data-tab="tasks">协作任务</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 资产候选列表 -->
+          <div id="candidates-tab" class="integration-tab-content">
+            <div class="table-container" style="margin-top: var(--spacing-lg);">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>候选Key</th>
+                    <th>资产类型</th>
+                    <th>提交者</th>
+                    <th>状态</th>
+                    <th>提交时间</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="candidates-table-body">
+                  <!-- 动态生成 -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- 协作任务列表 -->
+          <div id="tasks-tab" class="integration-tab-content hidden">
+            <div class="table-container" style="margin-top: var(--spacing-lg);">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>任务Key</th>
+                    <th>调用者</th>
+                    <th>状态</th>
+                    <th>创建时间</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="tasks-table-body">
+                  <!-- 动态生成 -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- 审计日志页面 -->
+        <section id="page-audit" class="page">
+          <div class="page-header">
+            <h1 class="page-header-title">审计日志</h1>
+            <p class="page-header-description">查看系统操作和调用记录</p>
+          </div>
+
+          <div class="toolbar">
+            <div class="toolbar-left">
+              <div class="search-box" style="max-width: 280px;">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+                <input type="text" class="input" placeholder="搜索日志...">
+              </div>
+              <select class="select" style="width: auto;" id="audit-action-filter">
+                <option value="">全部操作</option>
+                <option value="invoke_capability">调用能力</option>
+                <option value="search_capabilities">搜索能力</option>
+                <option value="publish_capability">发布能力</option>
+                <option value="create_kb">创建知识库</option>
+                <option value="upload_doc">上传文档</option>
+              </select>
+              <select class="select" style="width: auto;" id="audit-decision-filter">
+                <option value="">全部结果</option>
+                <option value="allow">成功</option>
+                <option value="deny">拒绝</option>
+              </select>
+            </div>
+            <div class="toolbar-right">
+              <div class="view-toggle">
+                <button class="active" data-view="table">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+                  </svg>
+                </button>
+                <button data-view="timeline">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </button>
+              </div>
+              <button class="btn btn-secondary" id="audit-refresh-btn">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                刷新
+              </button>
+            </div>
+          </div>
+
+          <!-- 表格视图 -->
+          <div class="table-container" id="audit-table-view">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>时间</th>
+                  <th>Trace ID</th>
+                  <th>操作者</th>
+                  <th>动作</th>
+                  <th>资源</th>
+                  <th>结果</th>
+                  <th>耗时</th>
+                </tr>
+              </thead>
+              <tbody id="audit-table-body">
+                <!-- 动态生成 -->
+              </tbody>
+            </table>
+          </div>
+
+          <!-- 时间线视图 -->
+          <div class="card hidden" id="audit-timeline-view" style="margin-top: var(--spacing-lg);">
+            <div class="timeline" id="audit-timeline">
+              <!-- 动态生成 -->
+            </div>
+          </div>
+        </section>
+
+        <!-- 资产详情页面 -->
+        <section id="page-detail" class="page">
+          <div class="page-header">
+            <h1 class="page-header-title">资产详情</h1>
+            <p class="page-header-description">查看选中资产的详细信息</p>
+          </div>
+
+          <div class="toolbar">
+            <div class="toolbar-right">
+              <button class="btn btn-secondary" id="detail-clear-btn">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+                清空详情
+              </button>
+            </div>
+          </div>
+
+          <div id="asset-detail" class="detail-panel">
+            <div class="detail-panel-empty">
+              <div class="empty-state">
+                <div class="empty-state-icon">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                </div>
+                <h3 class="empty-state-title">暂无选中资产</h3>
+                <p class="empty-state-description">从其他页面选择一个资产查看详细信息</p>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <!-- Toast 容器 -->
+  <div class="toast-container" id="toast-container"></div>
+
+  <!-- 模态框容器 -->
+  <div class="modal-overlay" id="modal-overlay">
+    <div class="modal" id="modal">
+      <div class="modal-header">
+        <h3 class="modal-title" id="modal-title">标题</h3>
+        <button class="modal-close" id="modal-close">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
       </div>
-      <table class="data-table">
-        <thead><tr><th>文件名</th><th>解析状态</th><th>切片数</th><th>版本</th></tr></thead>
-        <tbody id="doc-table-body"></tbody>
-      </table>
-    </section>
-
-    <section id="page-agents" class="page">
-      <h2>Agent管理</h2>
-      <table class="data-table">
-        <thead><tr><th>名称</th><th>角色</th><th>业务域</th><th>状态</th><th>是否主控</th></tr></thead>
-        <tbody id="agent-table-body"></tbody>
-      </table>
-    </section>
-
-    <section id="page-audit" class="page">
-      <h2>审计日志</h2>
-      <div class="toolbar">
-        <button id="audit-refresh-btn">刷新最近50条</button>
+      <div class="modal-body" id="modal-body">
+        <!-- 动态内容 -->
       </div>
-      <table class="data-table">
-        <thead><tr><th>时间</th><th>Trace ID</th><th>操作者</th><th>动作</th><th>资源</th><th>结果</th><th>耗时(ms)</th></tr></thead>
-        <tbody id="audit-table-body"></tbody>
-      </table>
-    </section>
-  </main>
-</div>
+      <div class="modal-footer" id="modal-footer">
+        <!-- 动态按钮 -->
+      </div>
+    </div>
+  </div>
 
-<script src="app.js"></script>
+  <script src="app.js"></script>
 </body>
 </html>

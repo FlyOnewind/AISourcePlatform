@@ -6,20 +6,25 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import Identity, get_current_identity, get_task_id, get_trace_id, require_admin_roles
 from app.core.db import get_db
 from app.models.capability import Capability, CapabilityVersion
+from app.models.capability_permission import CapabilityPermission
 from app.schemas.capability import (
     CapabilityCreate,
+    CapabilityDetailOut,
     CapabilityHit,
     CapabilityInvokeRequest,
     CapabilityInvokeResponse,
     CapabilityOut,
     CapabilitySearchRequest,
     CapabilitySearchResponse,
+    CapabilityPermissionCreate,
+    CapabilityPermissionOut,
     PublishRequest,
     RecommendedStep,
     UsageInfo,
 )
 from app.schemas.common import ok
 from app.services.audit_service import AuditService
+from app.services.capability_permission_service import CapabilityPermissionService
 from app.services.capability_service import CapabilityNotFoundError, CapabilityService
 from app.services.llm.factory import get_llm_provider
 from app.services.policy_service import PolicyService, Resource, Subject
@@ -42,6 +47,33 @@ def _to_out(cap: Capability) -> CapabilityOut:
         current_version=cap.current_version,
         input_schema=cap.input_schema or {},
         output_schema=cap.output_schema or {},
+    )
+
+
+def _to_detail(cap: Capability) -> CapabilityDetailOut:
+    return CapabilityDetailOut(
+        **_to_out(cap).model_dump(),
+        scenarios=cap.scenarios or [],
+        examples=cap.examples or [],
+        owner_user=cap.owner_user,
+        allowed_agent_roles=cap.allowed_agent_roles or [],
+        endpoint=cap.endpoint,
+        timeout_ms=cap.timeout_ms,
+        side_effect=cap.side_effect,
+        ref_id=cap.ref_id,
+        metadata=cap.metadata_ or {},
+    )
+
+
+def _permission_out(permission: CapabilityPermission) -> CapabilityPermissionOut:
+    return CapabilityPermissionOut(
+        id=str(permission.id),
+        capability_id=str(permission.capability_id),
+        subject_type=permission.subject_type,
+        subject_code=permission.subject_code,
+        permission=permission.permission,
+        conditions=permission.conditions or {},
+        status=permission.status,
     )
 
 
@@ -96,7 +128,56 @@ async def get_capability(
     cap = result.scalar_one_or_none()
     if cap is None:
         raise HTTPException(status_code=404, detail={"code": "404001", "message": "能力不存在"})
-    return ok(_to_out(cap).model_dump())
+    return ok(_to_detail(cap).model_dump())
+
+
+@router.get("/{capability_id}/permissions")
+async def list_capability_permissions(
+    capability_id: str,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(get_current_identity),
+):
+    result = await db.execute(select(Capability).where(Capability.id == capability_id))
+    cap = result.scalar_one_or_none()
+    if cap is None:
+        raise HTTPException(status_code=404, detail={"code": "404001", "message": "能力不存在"})
+    result = await db.execute(select(CapabilityPermission).where(CapabilityPermission.capability_id == cap.id))
+    return ok([_permission_out(p).model_dump() for p in result.scalars().all()])
+
+
+@router.post("/{capability_id}/permissions")
+async def create_capability_permission(
+    capability_id: str,
+    payload: CapabilityPermissionCreate,
+    db: AsyncSession = Depends(get_db),
+    identity: Identity = Depends(require_admin_roles("platform_admin", "capability_admin")),
+):
+    result = await db.execute(select(Capability).where(Capability.id == capability_id))
+    cap = result.scalar_one_or_none()
+    if cap is None:
+        raise HTTPException(status_code=404, detail={"code": "404001", "message": "能力不存在"})
+    existing = await db.execute(
+        select(CapabilityPermission).where(
+            CapabilityPermission.capability_id == cap.id,
+            CapabilityPermission.subject_type == payload.subject_type,
+            CapabilityPermission.subject_code == payload.subject_code,
+            CapabilityPermission.permission == payload.permission,
+        )
+    )
+    if existing.scalar_one_or_none() is not None:
+        raise HTTPException(status_code=409, detail={"code": "409001", "message": "该能力权限已存在"})
+    perm = CapabilityPermission(
+        capability_id=cap.id,
+        subject_type=payload.subject_type,
+        subject_code=payload.subject_code,
+        permission=payload.permission,
+        conditions=payload.conditions,
+        status=payload.status,
+    )
+    db.add(perm)
+    await db.commit()
+    await db.refresh(perm)
+    return ok(_permission_out(perm).model_dump())
 
 
 @router.patch("/{capability_id}")
@@ -195,6 +276,22 @@ async def invoke_capability(
         raise HTTPException(status_code=403, detail={"code": "403001", "message": "Agent 无权限调用该能力"})
 
     policy_service = PolicyService(db)
+    perm_subject = CapabilityPermissionService.from_identity(identity)
+    explicit_allowed, explicit_reason = await CapabilityPermissionService(db).evaluate(
+        perm_subject,
+        cap,
+        "invoke",
+        context=payload.context,
+    )
+    if explicit_allowed is False:
+        await audit.log(
+            trace_id=trace_id, actor_type=identity.actor_type, actor_id=identity.key, action="invoke_capability",
+            resource_type=cap.type, resource_id=cap.capability_key, decision="deny", error_code="403001",
+            metadata={"reason": explicit_reason},
+        )
+        await db.commit()
+        raise HTTPException(status_code=403, detail={"code": "403001", "message": f"能力权限拒绝: {explicit_reason}"})
+
     allowed, reason = await policy_service.evaluate(
         subject,
         Resource(capability_type=cap.type, business_domain=cap.business_domain, security_level=cap.security_level),

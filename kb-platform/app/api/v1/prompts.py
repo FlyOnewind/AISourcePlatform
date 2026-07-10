@@ -7,7 +7,7 @@ from app.api.deps import Identity, get_current_identity, require_admin_roles
 from app.core.db import get_db
 from app.models.skill import PromptTemplate
 from app.schemas.common import ok
-from app.schemas.skill import PromptCreate, PromptOut, PromptRenderRequest, PromptRenderResponse
+from app.schemas.skill import PromptCreate, PromptDetailOut, PromptOut, PromptRenderRequest, PromptRenderResponse
 from app.services.prompt_service import PromptRenderError, render_prompt
 
 router = APIRouter(prefix="/api/v1/prompts", tags=["prompts"])
@@ -15,6 +15,22 @@ router = APIRouter(prefix="/api/v1/prompts", tags=["prompts"])
 
 def _to_out(p: PromptTemplate) -> PromptOut:
     return PromptOut(id=str(p.id), prompt_key=p.prompt_key, name=p.name, version=p.version, status=p.status, owner=p.owner)
+
+
+@router.get("/{prompt_id}")
+async def get_prompt(prompt_id: str, db: AsyncSession = Depends(get_db), identity: Identity = Depends(get_current_identity)):
+    result = await db.execute(select(PromptTemplate).where(PromptTemplate.id == prompt_id))
+    prompt = result.scalar_one_or_none()
+    if prompt is None:
+        raise HTTPException(status_code=404, detail={"code": "404001", "message": "Prompt 不存在"})
+    return ok(
+        PromptDetailOut(
+            **_to_out(prompt).model_dump(),
+            template=prompt.template,
+            variables=prompt.variables or [],
+            model_config_data=prompt.model_config_ or {},
+        ).model_dump()
+    )
 
 
 @router.post("")

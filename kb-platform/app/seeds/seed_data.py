@@ -17,6 +17,7 @@ from app.core.db import AsyncSessionLocal, create_all_tables
 from app.core.security import generate_api_key
 from app.models.agent import AdminUser, Agent
 from app.models.capability import Capability
+from app.models.capability_permission import CapabilityPermission
 from app.models.knowledge import KnowledgeBase
 from app.models.policy import Policy
 from app.models.skill import PromptTemplate, Skill
@@ -228,6 +229,39 @@ async def get_or_create_policy(db, policy_key, **kwargs) -> tuple[Policy, bool]:
     return policy, True
 
 
+async def get_or_create_capability_permission(
+    db,
+    capability: Capability,
+    subject_type: str,
+    subject_code: str,
+    permission: str,
+    conditions: dict | None = None,
+    status: str = "active",
+) -> tuple[CapabilityPermission, bool]:
+    result = await db.execute(
+        select(CapabilityPermission).where(
+            CapabilityPermission.capability_id == capability.id,
+            CapabilityPermission.subject_type == subject_type,
+            CapabilityPermission.subject_code == subject_code,
+            CapabilityPermission.permission == permission,
+        )
+    )
+    existing = result.scalar_one_or_none()
+    if existing:
+        return existing, False
+    perm = CapabilityPermission(
+        capability_id=capability.id,
+        subject_type=subject_type,
+        subject_code=subject_code,
+        permission=permission,
+        conditions=conditions or {},
+        status=status,
+    )
+    db.add(perm)
+    await db.flush()
+    return perm, True
+
+
 async def seed() -> None:
     await create_all_tables()
     llm = get_llm_provider()
@@ -341,6 +375,41 @@ async def seed() -> None:
 
         for cap_kwargs in CAPABILITIES_EXTRA:
             await get_or_create_capability(db, **cap_kwargs)
+
+        # --- Capability permissions：显式授权，用于更细粒度的发现/调用控制 ---
+        async def cap_by_key(capability_key: str) -> Capability:
+            result = await db.execute(select(Capability).where(Capability.capability_key == capability_key))
+            capability = result.scalar_one()
+            return capability
+
+        explicit_permissions = [
+            ("kb_store_operation", "role", "operation_agent", ["discover", "invoke"]),
+            ("kb_product", "role", "product_submission_agent", ["discover", "invoke"]),
+            ("kb_compliance", "role", "operation_agent", ["discover", "invoke"]),
+            ("kb_compliance", "role", "product_submission_agent", ["discover", "invoke"]),
+            ("kb_compliance", "role", "finance_agent", ["discover", "invoke"]),
+            ("skill_live_script", "role", "operation_agent", ["discover", "invoke"]),
+            ("skill_live_script", "role", "business_school_agent", ["discover", "invoke"]),
+            ("skill_live_script", "role", "master_agent", ["discover", "invoke"]),
+            ("skill_roi_estimate", "role", "finance_agent", ["discover", "invoke"]),
+            ("skill_roi_estimate", "role", "operation_agent", ["discover", "invoke"]),
+            ("skill_roi_estimate", "role", "product_submission_agent", ["discover", "invoke"]),
+            ("prompt_live_script", "role", "operation_agent", ["discover", "invoke"]),
+            ("prompt_live_script", "role", "business_school_agent", ["discover", "invoke"]),
+            ("prompt_live_script", "role", "master_agent", ["discover", "invoke"]),
+            ("tool_forbidden_word_check", "role", "operation_agent", ["discover", "invoke"]),
+            ("tool_forbidden_word_check", "role", "finance_agent", ["discover", "invoke"]),
+            ("tool_forbidden_word_check", "role", "product_submission_agent", ["discover", "invoke"]),
+            ("tool_forbidden_word_check", "role", "merchant_agent", ["discover", "invoke"]),
+            ("tool_forbidden_word_check", "role", "supply_chain_agent", ["discover", "invoke"]),
+            ("tool_forbidden_word_check", "role", "hr_agent", ["discover", "invoke"]),
+            ("tool_forbidden_word_check", "role", "business_school_agent", ["discover", "invoke"]),
+            ("tool_forbidden_word_check", "role", "master_agent", ["discover", "invoke"]),
+        ]
+        for capability_key, subject_type, subject_code, permissions in explicit_permissions:
+            capability = await cap_by_key(capability_key)
+            for permission in permissions:
+                await get_or_create_capability_permission(db, capability, subject_type, subject_code, permission)
 
         # 存量Agent作为能力注册，供 master_agent 发现和调用（对应文档03 3.5）
         for agent_key, name, role, domain, dept in BUSINESS_AGENTS:

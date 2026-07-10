@@ -29,6 +29,15 @@ class SkillOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class SkillDetailOut(SkillOut):
+    description: str | None = None
+    business_domain: str | None = None
+    input_schema: dict[str, Any] = Field(default_factory=dict)
+    output_schema: dict[str, Any] = Field(default_factory=dict)
+    allowed_agent_roles: list[str] = Field(default_factory=list)
+    prompt_key: str | None = None
+
+
 class SkillInvokeRequest(BaseModel):
     input: dict[str, Any] = Field(default_factory=dict)
     context: dict[str, Any] = Field(default_factory=dict)
@@ -58,6 +67,12 @@ class PromptOut(BaseModel):
     owner: str | None
 
     model_config = {"from_attributes": True}
+
+
+class PromptDetailOut(PromptOut):
+    template: str
+    variables: list[dict[str, Any]] = Field(default_factory=list)
+    model_config_data: dict[str, Any] = Field(default_factory=dict, alias="model_config")
 
 
 class PromptRenderRequest(BaseModel):

@@ -6,7 +6,6 @@
 - 不在日志中打印敏感输入（本SDK不做本地日志落盘，调用方自行决定是否记录）。
 - 统一错误解析：所有非 2xx 响应抛出 KBPlatformError，携带 code/message。
 """
-from __future__ import annotations
 
 import uuid
 from typing import Any
@@ -163,20 +162,22 @@ class KBPlatformClient:
     def report_result(
         self, task_id: str, result: dict[str, Any], artifacts: list[Any] | None = None, trace_id: str | None = None,
     ) -> dict[str, Any]:
-        """V1 简化实现：直接写入审计日志（作为 report_result 动作），不落地独立的任务结果表（后续待办）。"""
-        payload = {"task_id": task_id, "input": {"result": result, "artifacts": artifacts or []}, "context": {}}
-        # 复用能力调用通道之外，暂无专门的 report-result 接口，这里记录到本地供调用方消费。
-        return {"task_id": task_id, "reported": True, "result": result, "trace_id": trace_id or _new_trace_id()}
+        payload = {"result": {"result": result, "artifacts": artifacts or []}}
+        data = self._request(
+            "POST",
+            f"/api/v1/collaboration-tasks/{task_id}/result",
+            json=payload,
+            trace_id=trace_id,
+            task_id=task_id,
+        )["data"]
+        return {**data, "task_id": data.get("task_key", task_id)}
 
     def submit_asset_candidate(
         self, asset_type: str, content: dict[str, Any], metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """V1 简化实现：知识沉淀候选提交接口尚未在后端实现（对应文档04第11节，后续待办），
-        当前仅在本地校验参数结构并返回待处理状态，避免调用方误以为已入库。"""
-        return {
-            "asset_type": asset_type, "status": "pending_backend_support",
-            "note": "知识沉淀候选提交接口尚未实现，见 README「后续待办」",
-        }
+        payload = {"asset_type": asset_type, "content": content, "metadata": metadata or {}}
+        data = self._request("POST", "/api/v1/asset-candidates", json=payload)["data"]
+        return {**data, "candidate_id": data.get("candidate_key", data.get("id"))}
 
     # ------------------------------------------------------------------
     # 主控Agent扩展方法（文档06 2.2）
@@ -186,11 +187,17 @@ class KBPlatformClient:
         return self._request("GET", "/api/v1/agents/discover", params=params, trace_id=trace_id)["data"]
 
     def create_collaboration_task(self, task_spec: dict[str, Any]) -> dict[str, Any]:
-        """V1 简化实现：多Agent任务编排未落地独立后端服务（LangGraph留作后续待办），
-        本方法在客户端本地生成 task_id 并原样返回 task_spec，供 scripts/demo_multi_agent.py
-        编排使用；子任务分派与状态跟踪由调用方（demo脚本）自行完成。"""
         task_id = task_spec.get("task_id") or f"task_{uuid.uuid4().hex[:12]}"
-        return {**task_spec, "task_id": task_id, "status": "created"}
+        payload = {"task_spec": {**task_spec, "task_id": task_id}, "caller_agent_key": self._agent_id}
+        data = self._request("POST", "/api/v1/collaboration-tasks", json=payload)["data"]
+        return {**data, "task_id": data.get("task_key", task_id)}
 
     def report_subtask_result(self, task_id: str, subtask_id: str, result: dict[str, Any]) -> dict[str, Any]:
-        return {"task_id": task_id, "subtask_id": subtask_id, "status": "reported", "result": result}
+        payload = {"result": result}
+        data = self._request(
+            "POST",
+            f"/api/v1/collaboration-tasks/{task_id}/subtasks/{subtask_id}/result",
+            json=payload,
+            task_id=task_id,
+        )["data"]
+        return {**data, "task_id": data.get("task_key", task_id), "subtask_id": subtask_id}

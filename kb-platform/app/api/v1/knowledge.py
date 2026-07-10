@@ -2,21 +2,23 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import Identity, get_current_identity, get_trace_id, require_admin_roles
 from app.core.db import get_db
-from app.models.knowledge import Document, KnowledgeBase
+from app.models.knowledge import Document, KnowledgeBase, KnowledgeChunk
 from app.schemas.common import ok
 from app.schemas.knowledge import (
     ChunkHit,
     ChunkSource,
+    DocumentDetailOut,
     DocumentOut,
     KnowledgeAnswerRequest,
     KnowledgeAnswerResponse,
     KnowledgeBaseCreate,
+    KnowledgeBaseDetailOut,
     KnowledgeBaseOut,
     KnowledgeSearchRequest,
     KnowledgeSearchResponse,
@@ -98,7 +100,17 @@ async def get_kb(kb_id: str, db: AsyncSession = Depends(get_db), identity: Ident
     kb = await _resolve_kb(db, kb_id)
     if kb is None:
         raise HTTPException(status_code=404, detail={"code": "404001", "message": "知识库不存在"})
-    return ok(_kb_out(kb).model_dump())
+    doc_count = await db.scalar(select(func.count()).select_from(Document).where(Document.kb_id == kb.id))
+    chunk_count = await db.scalar(select(func.count()).select_from(KnowledgeChunk).where(KnowledgeChunk.kb_id == kb.id))
+    return ok(
+        KnowledgeBaseDetailOut(
+            **_kb_out(kb).model_dump(),
+            owner_department=kb.owner_department,
+            retrieval_config=kb.retrieval_config or {},
+            document_count=int(doc_count or 0),
+            chunk_count=int(chunk_count or 0),
+        ).model_dump()
+    )
 
 
 @router.post("/api/v1/knowledge-bases/{kb_id}/documents")
@@ -166,9 +178,10 @@ async def get_document(doc_id: str, db: AsyncSession = Depends(get_db), identity
     service = KnowledgeService(db, get_llm_provider())
     count = await service.get_chunk_count(doc.id)
     return ok(
-        DocumentOut(
+        DocumentDetailOut(
             id=str(doc.id), kb_id=str(doc.kb_id), title=doc.title, source_type=doc.source_type,
             parse_status=doc.parse_status, version=doc.version, security_level=doc.security_level, chunk_count=count,
+            source_uri=doc.source_uri, object_uri=doc.object_uri, parse_error=doc.parse_error, metadata=doc.metadata_ or {},
         ).model_dump()
     )
 

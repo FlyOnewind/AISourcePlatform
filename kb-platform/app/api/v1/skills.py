@@ -7,7 +7,13 @@ from app.api.deps import Identity, get_current_identity, get_trace_id, require_a
 from app.core.db import get_db
 from app.models.skill import Skill
 from app.schemas.common import ok
-from app.schemas.skill import SkillCreate, SkillEvaluateRequest, SkillInvokeRequest, SkillOut
+from app.schemas.skill import (
+    SkillCreate,
+    SkillDetailOut,
+    SkillEvaluateRequest,
+    SkillInvokeRequest,
+    SkillOut,
+)
 from app.services.audit_service import AuditService
 from app.services.llm.factory import get_llm_provider
 from app.services.skill_runtime import SkillExecutionError, SkillRuntime
@@ -50,7 +56,17 @@ async def get_skill(skill_id: str, db: AsyncSession = Depends(get_db), identity:
     skill = result.scalar_one_or_none()
     if skill is None:
         raise HTTPException(status_code=404, detail={"code": "404001", "message": "Skill 不存在"})
-    return ok(_to_out(skill).model_dump())
+    return ok(
+        SkillDetailOut(
+            **_to_out(skill).model_dump(),
+            description=skill.description,
+            business_domain=skill.business_domain,
+            input_schema=skill.input_schema or {},
+            output_schema=skill.output_schema or {},
+            allowed_agent_roles=skill.allowed_agent_roles or [],
+            prompt_key=skill.prompt_key,
+        ).model_dump()
+    )
 
 
 @router.post("/{skill_id}/invoke")

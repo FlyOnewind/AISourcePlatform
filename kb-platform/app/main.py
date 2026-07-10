@@ -5,7 +5,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.api.v1 import agents, audit, capabilities, health, knowledge, prompts, skills
+from app.api.v1 import agents, audit, capabilities, health, integration, knowledge, prompts, skills
 from app.core.config import get_settings
 from app.core.db import create_all_tables
 from app.core.security import generate_trace_id
@@ -49,6 +49,7 @@ async def trace_middleware(request: Request, call_next):
 app.include_router(health.router)
 app.include_router(agents.router)
 app.include_router(capabilities.router)
+app.include_router(integration.router)
 app.include_router(knowledge.router)
 app.include_router(skills.router)
 app.include_router(prompts.router)
