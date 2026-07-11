@@ -1,6 +1,7 @@
 import hashlib
 import json
-from collections.abc import Iterable, Mapping
+import math
+from collections.abc import Iterable
 from copy import deepcopy
 from typing import Literal
 
@@ -61,19 +62,28 @@ def _validation_error_sort_key(
     )
 
 
-def _validate_json_mapping_keys(
+def _validate_json_value(
     value: object,
     *,
     path: tuple[object, ...] = (),
 ) -> None:
-    if isinstance(value, Mapping):
+    if value is None or isinstance(value, (str, int, bool)):
+        return
+    if isinstance(value, float):
+        if math.isfinite(value):
+            return
+        raise _schema_definition_error(path=path)
+    if type(value) is dict:
         for key, child in value.items():
             if not isinstance(key, str):
                 raise _schema_definition_error(path=path)
-            _validate_json_mapping_keys(child, path=(*path, key))
-    elif isinstance(value, (list, tuple)):
+            _validate_json_value(child, path=(*path, key))
+        return
+    if type(value) is list:
         for index, child in enumerate(value):
-            _validate_json_mapping_keys(child, path=(*path, index))
+            _validate_json_value(child, path=(*path, index))
+        return
+    raise _schema_definition_error(path=path)
 
 
 def _schema_snapshot(schema: dict[str, object]) -> dict[str, object]:
@@ -106,7 +116,7 @@ class SchemaValidatorCache:
 
     def validate_schema(self, schema: dict[str, object]) -> None:
         schema_snapshot = _schema_snapshot(schema)
-        _validate_json_mapping_keys(schema_snapshot)
+        _validate_json_value(schema_snapshot)
         _canonical_schema(schema_snapshot)
         try:
             Draft202012Validator.check_schema(schema_snapshot)
@@ -128,7 +138,7 @@ class SchemaValidatorCache:
             raise ValueError("direction must be 'input' or 'output'")
 
         schema_snapshot = _schema_snapshot(schema)
-        _validate_json_mapping_keys(schema_snapshot)
+        _validate_json_value(schema_snapshot)
         canonical_schema = _canonical_schema(schema_snapshot)
         fingerprint = _schema_fingerprint(canonical_schema)
         internal_cache_key = (cache_key, fingerprint)

@@ -93,8 +93,8 @@ def test_schema_with_non_json_object_is_rejected_at_publish():
 
     assert exc.value.code == "SCHEMA_DEFINITION_INVALID"
     assert exc.value.details == {
-        "path": [],
-        "schema_path": [],
+        "path": ["default"],
+        "schema_path": ["default"],
         "keyword": "json",
     }
 
@@ -105,8 +105,40 @@ def test_schema_with_nan_is_rejected_at_publish():
 
     assert exc.value.code == "SCHEMA_DEFINITION_INVALID"
     assert exc.value.details == {
-        "path": [],
-        "schema_path": [],
+        "path": ["enum", 0],
+        "schema_path": ["enum", 0],
+        "keyword": "json",
+    }
+
+
+def test_schema_with_tuple_annotation_is_rejected_at_publish():
+    with pytest.raises(GatewayError) as exc:
+        SchemaValidatorCache().validate_schema({"default": ("draft",)})
+
+    assert exc.value.code == "SCHEMA_DEFINITION_INVALID"
+    assert exc.value.details == {
+        "path": ["default"],
+        "schema_path": ["default"],
+        "keyword": "json",
+    }
+
+
+@pytest.mark.parametrize(
+    "annotation",
+    [
+        {"draft"},
+        type("CustomList", (list,), {})(["draft"]),
+    ],
+    ids=["set", "custom-list"],
+)
+def test_schema_with_non_json_container_is_rejected_at_publish(annotation):
+    with pytest.raises(GatewayError) as exc:
+        SchemaValidatorCache().validate_schema({"default": annotation})
+
+    assert exc.value.code == "SCHEMA_DEFINITION_INVALID"
+    assert exc.value.details == {
+        "path": ["default"],
+        "schema_path": ["default"],
         "keyword": "json",
     }
 
@@ -182,6 +214,35 @@ def test_non_string_schema_key_cannot_collide_with_string_key():
         )
 
     assert validation_exc.value.code == "SCHEMA_INPUT_INVALID"
+
+
+def test_tuple_schema_cannot_hit_cached_list_schema():
+    cache = SchemaValidatorCache()
+    list_schema = {
+        "type": "object",
+        "required": ["name"],
+    }
+    tuple_schema = {
+        "type": "object",
+        "required": ("name",),
+    }
+
+    cache.validate({"name": "Ada"}, list_schema, "container-collision", "input")
+
+    with pytest.raises(GatewayError) as exc:
+        cache.validate(
+            {"name": "Ada"},
+            tuple_schema,
+            "container-collision",
+            "input",
+        )
+
+    assert exc.value.code == "SCHEMA_DEFINITION_INVALID"
+    assert exc.value.details == {
+        "path": ["required"],
+        "schema_path": ["required"],
+        "keyword": "json",
+    }
 
 
 def test_mutating_caller_schema_does_not_corrupt_cached_validator():
