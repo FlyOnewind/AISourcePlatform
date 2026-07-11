@@ -7,13 +7,11 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.v1 import agents, audit, capabilities, health, integration, knowledge, prompts, skills, tools
 from app.core.config import get_settings
-from app.core.db import create_all_tables
 from app.core.security import generate_trace_id
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await create_all_tables()
     yield
 
 

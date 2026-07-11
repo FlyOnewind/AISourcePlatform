@@ -26,6 +26,7 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
 
 async def create_all_tables() -> None:
+    """Create tables for test and local helper workflows only."""
     # 必须在此处导入所有 models 模块，确保它们注册到 Base.metadata 上
     from app import models  # noqa: F401
 
