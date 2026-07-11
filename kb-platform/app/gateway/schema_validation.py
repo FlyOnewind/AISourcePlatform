@@ -67,15 +67,15 @@ def _validate_json_value(
     *,
     path: tuple[object, ...] = (),
 ) -> None:
-    if value is None or isinstance(value, (str, int, bool)):
+    if value is None or type(value) in {str, int, bool}:
         return
-    if isinstance(value, float):
+    if type(value) is float:
         if math.isfinite(value):
             return
         raise _schema_definition_error(path=path)
     if type(value) is dict:
         for key, child in value.items():
-            if not isinstance(key, str):
+            if type(key) is not str:
                 raise _schema_definition_error(path=path)
             _validate_json_value(child, path=(*path, key))
         return

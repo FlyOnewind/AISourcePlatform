@@ -5,6 +5,18 @@ from app.gateway.errors import GatewayError
 from app.gateway.schema_validation import SchemaValidatorCache
 
 
+class _CustomInt(int):
+    pass
+
+
+class _CustomFloat(float):
+    pass
+
+
+class _CustomString(str):
+    pass
+
+
 def test_missing_required_input_raises_input_error():
     cache = SchemaValidatorCache()
 
@@ -143,6 +155,30 @@ def test_schema_with_non_json_container_is_rejected_at_publish(annotation):
     }
 
 
+def test_schema_with_custom_float_is_rejected_at_publish():
+    with pytest.raises(GatewayError) as exc:
+        SchemaValidatorCache().validate_schema({"default": _CustomFloat(1.5)})
+
+    assert exc.value.code == "SCHEMA_DEFINITION_INVALID"
+    assert exc.value.details == {
+        "path": ["default"],
+        "schema_path": ["default"],
+        "keyword": "json",
+    }
+
+
+def test_schema_with_custom_string_mapping_key_is_rejected_at_publish():
+    with pytest.raises(GatewayError) as exc:
+        SchemaValidatorCache().validate_schema({_CustomString("type"): "integer"})
+
+    assert exc.value.code == "SCHEMA_DEFINITION_INVALID"
+    assert exc.value.details == {
+        "path": [],
+        "schema_path": [],
+        "keyword": "json",
+    }
+
+
 def test_draft_2020_12_prefix_items_is_accepted_and_enforced():
     schema = {
         "type": "array",
@@ -241,6 +277,27 @@ def test_tuple_schema_cannot_hit_cached_list_schema():
     assert exc.value.details == {
         "path": ["required"],
         "schema_path": ["required"],
+        "keyword": "json",
+    }
+
+
+def test_custom_int_schema_cannot_hit_cached_plain_int_schema():
+    cache = SchemaValidatorCache()
+
+    cache.validate(1, {"const": 1}, "scalar-collision", "input")
+
+    with pytest.raises(GatewayError) as exc:
+        cache.validate(
+            1,
+            {"const": _CustomInt(1)},
+            "scalar-collision",
+            "input",
+        )
+
+    assert exc.value.code == "SCHEMA_DEFINITION_INVALID"
+    assert exc.value.details == {
+        "path": ["const"],
+        "schema_path": ["const"],
         "keyword": "json",
     }
 
