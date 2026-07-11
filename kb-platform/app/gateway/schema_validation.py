@@ -1,6 +1,6 @@
 import hashlib
 import json
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from copy import deepcopy
 from typing import Literal
 
@@ -11,6 +11,22 @@ from app.gateway.errors import GatewayError
 
 
 Direction = Literal["input", "output"]
+
+
+def _schema_definition_error(
+    *,
+    path: Iterable[object] = (),
+) -> GatewayError:
+    safe_path = list(path)
+    return GatewayError(
+        "SCHEMA_DEFINITION_INVALID",
+        "Schema definition is invalid",
+        details={
+            "path": safe_path,
+            "schema_path": safe_path.copy(),
+            "keyword": "json",
+        },
+    )
 
 
 def _error_details(error: SchemaError | ValidationError) -> dict[str, object]:
@@ -45,6 +61,28 @@ def _validation_error_sort_key(
     )
 
 
+def _validate_json_mapping_keys(
+    value: object,
+    *,
+    path: tuple[object, ...] = (),
+) -> None:
+    if isinstance(value, Mapping):
+        for key, child in value.items():
+            if not isinstance(key, str):
+                raise _schema_definition_error(path=path)
+            _validate_json_mapping_keys(child, path=(*path, key))
+    elif isinstance(value, (list, tuple)):
+        for index, child in enumerate(value):
+            _validate_json_mapping_keys(child, path=(*path, index))
+
+
+def _schema_snapshot(schema: dict[str, object]) -> dict[str, object]:
+    try:
+        return deepcopy(schema)
+    except Exception as error:
+        raise _schema_definition_error() from error
+
+
 def _canonical_schema(schema: dict[str, object]) -> bytes:
     try:
         return json.dumps(
@@ -55,19 +93,11 @@ def _canonical_schema(schema: dict[str, object]) -> bytes:
             sort_keys=True,
         ).encode("utf-8")
     except (TypeError, ValueError) as error:
-        raise GatewayError(
-            "SCHEMA_DEFINITION_INVALID",
-            "Schema definition is invalid",
-            details={
-                "path": [],
-                "schema_path": [],
-                "keyword": "json",
-            },
-        ) from error
+        raise _schema_definition_error() from error
 
 
-def _schema_fingerprint(schema: dict[str, object]) -> str:
-    return hashlib.sha256(_canonical_schema(schema)).hexdigest()
+def _schema_fingerprint(canonical_schema: bytes) -> str:
+    return hashlib.sha256(canonical_schema).hexdigest()
 
 
 class SchemaValidatorCache:
@@ -75,9 +105,11 @@ class SchemaValidatorCache:
         self._validators: dict[tuple[str, str], Draft202012Validator] = {}
 
     def validate_schema(self, schema: dict[str, object]) -> None:
-        _canonical_schema(schema)
+        schema_snapshot = _schema_snapshot(schema)
+        _validate_json_mapping_keys(schema_snapshot)
+        _canonical_schema(schema_snapshot)
         try:
-            Draft202012Validator.check_schema(schema)
+            Draft202012Validator.check_schema(schema_snapshot)
         except SchemaError as error:
             raise GatewayError(
                 "SCHEMA_DEFINITION_INVALID",
@@ -95,12 +127,22 @@ class SchemaValidatorCache:
         if direction not in ("input", "output"):
             raise ValueError("direction must be 'input' or 'output'")
 
-        fingerprint = _schema_fingerprint(schema)
+        schema_snapshot = _schema_snapshot(schema)
+        _validate_json_mapping_keys(schema_snapshot)
+        canonical_schema = _canonical_schema(schema_snapshot)
+        fingerprint = _schema_fingerprint(canonical_schema)
         internal_cache_key = (cache_key, fingerprint)
         validator = self._validators.get(internal_cache_key)
         if validator is None:
-            self.validate_schema(schema)
-            validator = Draft202012Validator(deepcopy(schema))
+            try:
+                Draft202012Validator.check_schema(schema_snapshot)
+            except SchemaError as error:
+                raise GatewayError(
+                    "SCHEMA_DEFINITION_INVALID",
+                    "Schema definition is invalid",
+                    details=_error_details(error),
+                ) from error
+            validator = Draft202012Validator(schema_snapshot)
             self._validators[internal_cache_key] = validator
 
         errors = sorted(

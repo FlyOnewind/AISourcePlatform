@@ -1,5 +1,6 @@
 import pytest
 
+import app.gateway.schema_validation as schema_validation
 from app.gateway.errors import GatewayError
 from app.gateway.schema_validation import SchemaValidatorCache
 
@@ -146,6 +147,43 @@ def test_same_cache_key_with_different_schema_uses_schema_fingerprint():
     assert len(cache._validators) == 2
 
 
+def test_non_string_schema_key_cannot_collide_with_string_key():
+    cache = SchemaValidatorCache()
+    non_string_key_schema = {
+        "type": "object",
+        "properties": {1: {"type": "integer"}},
+    }
+    string_key_schema = {
+        "type": "object",
+        "properties": {"1": {"type": "integer"}},
+    }
+
+    with pytest.raises(GatewayError) as definition_exc:
+        cache.validate(
+            {"1": "invalid"},
+            non_string_key_schema,
+            "key-collision",
+            "input",
+        )
+
+    assert definition_exc.value.code == "SCHEMA_DEFINITION_INVALID"
+    assert definition_exc.value.details == {
+        "path": ["properties"],
+        "schema_path": ["properties"],
+        "keyword": "json",
+    }
+
+    with pytest.raises(GatewayError) as validation_exc:
+        cache.validate(
+            {"1": "invalid"},
+            string_key_schema,
+            "key-collision",
+            "input",
+        )
+
+    assert validation_exc.value.code == "SCHEMA_INPUT_INVALID"
+
+
 def test_mutating_caller_schema_does_not_corrupt_cached_validator():
     schema = {
         "type": "object",
@@ -161,6 +199,31 @@ def test_mutating_caller_schema_does_not_corrupt_cached_validator():
     schema["properties"]["count"]["type"] = "string"  # type: ignore[index]
 
     cache.validate({"count": 2}, fresh_original_schema, "mutable", "input")
+
+
+def test_schema_is_snapshotted_before_fingerprinting(monkeypatch):
+    schema = {
+        "type": "object",
+        "properties": {"count": {"type": "integer"}},
+    }
+    canonical_schema = schema_validation._canonical_schema
+
+    def canonicalize_while_caller_mutates(candidate: dict[str, object]) -> bytes:
+        result = canonical_schema(candidate)
+        schema["properties"]["count"]["type"] = "string"  # type: ignore[index]
+        return result
+
+    monkeypatch.setattr(
+        schema_validation,
+        "_canonical_schema",
+        canonicalize_while_caller_mutates,
+    )
+    cache = SchemaValidatorCache()
+
+    cache.validate({"count": 1}, schema, "snapshot-order", "input")
+
+    validator = next(iter(cache._validators.values()))
+    assert validator.schema["properties"]["count"]["type"] == "integer"
 
 
 def test_multiple_validation_errors_are_sorted_deterministically():
