@@ -1,6 +1,7 @@
 import hashlib
 import json
 from collections.abc import Iterable
+from copy import deepcopy
 from typing import Literal
 
 from jsonschema import Draft202012Validator
@@ -20,22 +21,33 @@ def _error_details(error: SchemaError | ValidationError) -> dict[str, object]:
     }
 
 
-def _path_sort_key(path: Iterable[object]) -> tuple[tuple[str, str], ...]:
-    return tuple((type(part).__name__, str(part)) for part in path)
+def _path_sort_key(
+    path: Iterable[object],
+) -> tuple[tuple[int, int | str, str], ...]:
+    key: list[tuple[int, int | str, str]] = []
+    for part in path:
+        if isinstance(part, int) and not isinstance(part, bool):
+            key.append((0, part, ""))
+        else:
+            key.append((1, type(part).__name__, str(part)))
+    return tuple(key)
 
 
 def _validation_error_sort_key(
     error: ValidationError,
-) -> tuple[tuple[tuple[str, str], ...], tuple[tuple[str, str], ...]]:
+) -> tuple[
+    tuple[tuple[int, int | str, str], ...],
+    tuple[tuple[int, int | str, str], ...],
+]:
     return (
         _path_sort_key(error.absolute_path),
         _path_sort_key(error.absolute_schema_path),
     )
 
 
-def _schema_fingerprint(schema: dict[str, object]) -> str:
+def _canonical_schema(schema: dict[str, object]) -> bytes:
     try:
-        canonical_schema = json.dumps(
+        return json.dumps(
             schema,
             allow_nan=False,
             ensure_ascii=False,
@@ -46,8 +58,16 @@ def _schema_fingerprint(schema: dict[str, object]) -> str:
         raise GatewayError(
             "SCHEMA_DEFINITION_INVALID",
             "Schema definition is invalid",
+            details={
+                "path": [],
+                "schema_path": [],
+                "keyword": "json",
+            },
         ) from error
-    return hashlib.sha256(canonical_schema).hexdigest()
+
+
+def _schema_fingerprint(schema: dict[str, object]) -> str:
+    return hashlib.sha256(_canonical_schema(schema)).hexdigest()
 
 
 class SchemaValidatorCache:
@@ -55,6 +75,7 @@ class SchemaValidatorCache:
         self._validators: dict[tuple[str, str], Draft202012Validator] = {}
 
     def validate_schema(self, schema: dict[str, object]) -> None:
+        _canonical_schema(schema)
         try:
             Draft202012Validator.check_schema(schema)
         except SchemaError as error:
@@ -79,7 +100,7 @@ class SchemaValidatorCache:
         validator = self._validators.get(internal_cache_key)
         if validator is None:
             self.validate_schema(schema)
-            validator = Draft202012Validator(schema)
+            validator = Draft202012Validator(deepcopy(schema))
             self._validators[internal_cache_key] = validator
 
         errors = sorted(

@@ -83,6 +83,31 @@ def test_invalid_schema_is_rejected_at_publish():
 
     assert exc.value.code == "SCHEMA_DEFINITION_INVALID"
     assert exc.value.retryable is False
+    assert set(exc.value.details) == {"path", "schema_path", "keyword"}
+
+
+def test_schema_with_non_json_object_is_rejected_at_publish():
+    with pytest.raises(GatewayError) as exc:
+        SchemaValidatorCache().validate_schema({"default": object()})
+
+    assert exc.value.code == "SCHEMA_DEFINITION_INVALID"
+    assert exc.value.details == {
+        "path": [],
+        "schema_path": [],
+        "keyword": "json",
+    }
+
+
+def test_schema_with_nan_is_rejected_at_publish():
+    with pytest.raises(GatewayError) as exc:
+        SchemaValidatorCache().validate_schema({"enum": [float("nan")]})
+
+    assert exc.value.code == "SCHEMA_DEFINITION_INVALID"
+    assert exc.value.details == {
+        "path": [],
+        "schema_path": [],
+        "keyword": "json",
+    }
 
 
 def test_draft_2020_12_prefix_items_is_accepted_and_enforced():
@@ -121,6 +146,23 @@ def test_same_cache_key_with_different_schema_uses_schema_fingerprint():
     assert len(cache._validators) == 2
 
 
+def test_mutating_caller_schema_does_not_corrupt_cached_validator():
+    schema = {
+        "type": "object",
+        "properties": {"count": {"type": "integer"}},
+    }
+    fresh_original_schema = {
+        "type": "object",
+        "properties": {"count": {"type": "integer"}},
+    }
+    cache = SchemaValidatorCache()
+
+    cache.validate({"count": 1}, schema, "mutable", "input")
+    schema["properties"]["count"]["type"] = "string"  # type: ignore[index]
+
+    cache.validate({"count": 2}, fresh_original_schema, "mutable", "input")
+
+
 def test_multiple_validation_errors_are_sorted_deterministically():
     cache = SchemaValidatorCache()
     schema = {
@@ -144,6 +186,23 @@ def test_multiple_validation_errors_are_sorted_deterministically():
         "schema_path": ["properties", "a", "type"],
         "keyword": "type",
     }
+
+
+def test_multiple_array_errors_are_sorted_by_numeric_index():
+    cache = SchemaValidatorCache()
+    instance: list[object] = [0] * 11
+    instance[2] = "invalid-two"
+    instance[10] = "invalid-ten"
+
+    with pytest.raises(GatewayError) as exc:
+        cache.validate(
+            instance,
+            {"type": "array", "items": {"type": "integer"}},
+            "numeric-order",
+            "input",
+        )
+
+    assert exc.value.details["path"] == [2]
 
 
 def test_invalid_direction_is_rejected_without_arbitrary_gateway_code():
