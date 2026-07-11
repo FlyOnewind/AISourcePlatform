@@ -5,11 +5,19 @@ from app.models.audit import AuditLog
 from app.models.asset import AssetCandidate, CollaborationTask
 from app.models.capability import Capability, CapabilityVersion
 from app.models.capability_permission import CapabilityPermission
+from app.models.gateway import (
+    A2AAgent,
+    CapabilityEndpoint,
+    CapabilityInvocation,
+    GRPCDescriptor,
+    MCPServer,
+)
 from app.models.knowledge import Document, KnowledgeBase, KnowledgeChunk
 from app.models.policy import Policy
 from app.models.skill import PromptTemplate, Skill
 
 __all__ = [
+    "A2AAgent",
     "Agent",
     "AdminUser",
     "ApprovalTicket",
@@ -18,10 +26,14 @@ __all__ = [
     "Capability",
     "CapabilityVersion",
     "CapabilityPermission",
+    "CapabilityEndpoint",
+    "CapabilityInvocation",
     "CollaborationTask",
     "Document",
+    "GRPCDescriptor",
     "KnowledgeBase",
     "KnowledgeChunk",
+    "MCPServer",
     "Policy",
     "PromptTemplate",
     "Skill",
