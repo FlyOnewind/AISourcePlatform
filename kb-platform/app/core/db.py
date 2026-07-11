@@ -1,7 +1,6 @@
 """数据库引擎与会话管理（SQLAlchemy 2.0 async）。
 
-本轮不引入 Alembic：启动时通过 Base.metadata.create_all 建表，
-后续 schema 稳定后再补迁移工具（见 README「后续待办」）。
+生产环境通过 Alembic 管理 schema；create_all_tables 仅供测试和本地辅助流程使用。
 """
 from collections.abc import AsyncGenerator
 

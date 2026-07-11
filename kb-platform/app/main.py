@@ -1,4 +1,4 @@
-"""FastAPI 应用入口：中间件(trace_id)、路由挂载、静态管理后台、启动建表。"""
+"""FastAPI 应用入口：中间件(trace_id)、路由挂载与静态管理后台。"""
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request

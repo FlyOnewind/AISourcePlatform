@@ -19,6 +19,27 @@ def test_alembic_has_single_head():
     assert len(script.get_heads()) == 1
 
 
+def test_alembic_accepts_percent_encoded_database_url():
+    env = os.environ.copy()
+    password = make_url(env["DATABASE_URL"]).password
+    assert password is not None
+    encoded_password = f"{password[:-1]}%{ord(password[-1]):02X}"
+    env["DATABASE_URL"] = env["DATABASE_URL"].replace(
+        f":{password}@", f":{encoded_password}@", 1
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-m", "alembic", "current"],
+        cwd=Path(__file__).parents[1],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 @pytest.mark.asyncio
 async def test_alembic_upgrade_head_creates_existing_tables():
     source_url = make_url(os.environ["DATABASE_URL"])
