@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.skill import PromptTemplate, Skill
 from app.services.llm.base import LLMProvider
 from app.services.prompt_service import render_prompt
-from app.services.tools.forbidden_word_check import check_forbidden_words
+from app.services.tools import ToolRegistry, create_tool_executor
 
 
 class SkillExecutionError(ValueError):
@@ -74,31 +74,90 @@ class SkillRuntime:
         }
 
     async def _run_tool_skill(self, skill: Skill, input_data: dict) -> dict:
+        """通过工具注册框架执行工具技能。"""
         tool_deps = [d for d in (skill.dependencies or []) if d.startswith("tool_")]
-        if "tool_forbidden_word_check" in tool_deps:
-            text = input_data.get("text") or input_data.get("script") or ""
-            return {"tool_result": check_forbidden_words(text), "tool": "tool_forbidden_word_check"}
+        if not tool_deps:
+            return {
+                "output_text": "[Tool Skill] 未指定工具依赖",
+                "tool_dependencies": [],
+            }
+
+        # 获取数据库会话来加载 capability
+        from sqlalchemy import select
+        from app.models.capability import Capability
+
+        results = []
+        for tool_key in tool_deps:
+            # 加载 capability
+            result = await self._db.execute(
+                select(Capability).where(Capability.capability_key == tool_key)
+            )
+            capability = result.scalar_one_or_none()
+
+            if capability:
+                # 尝试使用已注册的工具实现
+                tool_executor = create_tool_executor(capability)
+                if tool_executor:
+                    tool_result = await tool_executor.execute(input_data)
+                    results.append({
+                        "tool": tool_key,
+                        "result": tool_result,
+                        "status": "executed",
+                    })
+                    continue
+
+            # 向后兼容：如果没有找到注册的实现，使用旧方式
+            if tool_key == "tool_forbidden_word_check":
+                from app.services.tools.forbidden_word_check import check_forbidden_words
+                text = input_data.get("text") or input_data.get("script") or ""
+                results.append({
+                    "tool": tool_key,
+                    "result": check_forbidden_words(text),
+                    "status": "legacy_fallback",
+                })
+                continue
+
+            # 其他工具返回 STUB
+            results.append({
+                "tool": tool_key,
+                "result": {"note": f"工具 {tool_key} 暂未实现"},
+                "status": "stub",
+            })
+
+        if len(results) == 1:
+            return {
+                "tool_result": results[0]["result"],
+                "tool": results[0]["tool"],
+                "status": results[0]["status"],
+            }
+
         return {
-            "output_text": f"[MOCK TOOL] 未实现工具依赖 {tool_deps}，返回占位结果",
+            "output_text": f"已执行 {len(results)} 个工具",
             "tool_dependencies": tool_deps,
+            "results": results,
         }
 
     async def _run_workflow_skill(self, skill: Skill, input_data: dict, context: dict) -> dict:
+        """执行工作流技能，支持多种依赖类型。"""
+        from sqlalchemy import select
+        from app.models.capability import Capability
+        from app.services.retrieval_service import RetrievalService
+
         steps_result = []
         accumulated_context = dict(input_data)
+
         for dep_key in skill.dependencies or []:
             if dep_key.startswith("kb_"):
-                from app.services.retrieval_service import RetrievalService
-
                 retrieval = RetrievalService(self._db, self._llm)
                 query = accumulated_context.get("query") or accumulated_context.get("task") or ""
                 chunks = await retrieval.search(query=query, kb_ids=None, top_k=3)
                 steps_result.append({"step": dep_key, "type": "knowledge", "hits": len(chunks)})
+
             elif dep_key.startswith("tool_"):
-                text = accumulated_context.get("text") or accumulated_context.get("script") or ""
-                if dep_key == "tool_forbidden_word_check":
-                    result = check_forbidden_words(text)
-                    steps_result.append({"step": dep_key, "type": "tool", "result": result})
+                # 通过工具注册框架执行
+                result = await self._execute_workflow_tool(dep_key, accumulated_context)
+                steps_result.append({"step": dep_key, "type": "tool", "result": result})
+
             else:
                 steps_result.append({"step": dep_key, "type": "unresolved"})
 
@@ -107,6 +166,29 @@ class SkillRuntime:
         )
         output_text = await self._llm.generate(summary_prompt)
         return {"output_text": output_text, "steps": steps_result}
+
+    async def _execute_workflow_tool(self, tool_key: str, input_data: dict) -> dict:
+        """在工作流中执行单个工具。"""
+        from sqlalchemy import select
+        from app.models.capability import Capability
+
+        result = await self._db.execute(
+            select(Capability).where(Capability.capability_key == tool_key)
+        )
+        capability = result.scalar_one_or_none()
+
+        if capability:
+            tool_executor = create_tool_executor(capability)
+            if tool_executor:
+                return await tool_executor.execute(input_data)
+
+        # 向后兼容
+        if tool_key == "tool_forbidden_word_check":
+            from app.services.tools.forbidden_word_check import check_forbidden_words
+            text = input_data.get("text") or input_data.get("script") or ""
+            return check_forbidden_words(text)
+
+        return {"note": f"工具 {tool_key} 暂未实现"}
 
     async def _run_agent_skill(self, skill: Skill, input_data: dict) -> dict:
         agent_deps = [d for d in (skill.dependencies or []) if d.startswith("agent_")]

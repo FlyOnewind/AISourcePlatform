@@ -1,0 +1,18 @@
+{
+  "check_time": "2026-07-10T14:37:04.784993",
+  "passed": 27,
+  "warning": 2,
+  "failed": 0,
+  "issues": [
+    {
+      "type": "warning",
+      "name": "Python Version",
+      "message": "Python 3.6.5 (needs >=3.11 for full compatibility)"
+    },
+    {
+      "type": "warning",
+      "name": "Git Repo",
+      "message": "Git initialized"
+    }
+  ]
+}

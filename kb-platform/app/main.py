@@ -5,7 +5,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.api.v1 import agents, audit, capabilities, health, integration, knowledge, prompts, skills
+from app.api.v1 import agents, audit, capabilities, health, integration, knowledge, prompts, skills, tools
 from app.core.config import get_settings
 from app.core.db import create_all_tables
 from app.core.security import generate_trace_id
@@ -54,5 +54,6 @@ app.include_router(knowledge.router)
 app.include_router(skills.router)
 app.include_router(prompts.router)
 app.include_router(audit.router)
+app.include_router(tools.router)
 
 app.mount("/admin", StaticFiles(directory="admin_console", html=True), name="admin")

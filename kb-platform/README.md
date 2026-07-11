@@ -72,12 +72,11 @@ uv run python -m app.seeds.seed_data
 
 ### 5. 启动服务
 ```bash
-uv run uvicorn app.main:app --reload --port 8000
+uv run uvicorn app.main:app --reload --port 8010
 ```
-- Swagger 文档：http://localhost:8000/docs
-- 管理后台：http://localhost:8000/admin （用种子数据中 `admin` 的 API Key 登录）
+- Swagger 文档：http://localhost:8010/docs
+- 管理后台：http://localhost:8010/admin （用种子数据中 `admin` 的 API Key 登录）
 
-> 若 8000 端口被占用，换个端口即可：`--port 8010`，管理后台/Swagger 地址相应调整。
 
 ### 6. 跑多Agent协作Demo
 复现文档09"门店直播运营优化方案"完整链路：主控Agent检索能力 → 拆解任务 → 5个业务Agent并行调用中台能力 → 整合结果 → 合规终检。

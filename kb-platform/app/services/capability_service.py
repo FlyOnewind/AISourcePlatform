@@ -14,7 +14,7 @@ from app.services.llm.base import LLMProvider
 from app.services.policy_service import PolicyService, Resource, Subject
 from app.services.prompt_service import PromptRenderError, render_prompt
 from app.services.skill_runtime import SkillExecutionError, SkillRuntime
-from app.services.tools.forbidden_word_check import check_forbidden_words
+from app.services.tools import ToolRegistry, create_tool_executor
 
 CAPABILITY_TYPE_ORDER = {"knowledge_base": 0, "tool": 1, "skill": 2, "prompt": 3, "agent": 4, "workflow": 5}
 
@@ -146,10 +146,38 @@ class CapabilityService:
         }
 
     async def _invoke_tool(self, capability: Capability, input_data: dict) -> dict:
-        if capability.capability_key == "tool_forbidden_word_check":
-            text = input_data.get("text") or input_data.get("script") or ""
-            return check_forbidden_words(text)
+        """通过工具注册框架统一调用工具实现。"""
+        # 尝试使用已注册的工具实现
+        tool_executor = create_tool_executor(capability)
+        if tool_executor:
+            try:
+                return await tool_executor.execute(input_data)
+            except Exception as e:
+                return {"error": f"工具执行失败: {str(e)}", "capability_key": capability.capability_key}
+
+        # 检查是否有 endpoint 配置进行远程调用
+        if capability.endpoint:
+            return await self._invoke_remote_tool(capability, input_data)
+
+        # 对于示例工具，返回友好的 STUB 提示
+        if capability.capability_key in ("tool_customer_segment", "tool_price_optimization"):
+            return {
+                "note": f"[示例工具] {capability.name} 需要外部端点配置",
+                "capability_key": capability.capability_key,
+                "status": "pending_external_endpoint",
+                "echo": input_data,
+            }
+
         return {"note": f"[STUB] 工具 {capability.capability_key} 暂无本地实现，返回占位结果", "echo": input_data}
+
+    async def _invoke_remote_tool(self, capability: Capability, input_data: dict) -> dict:
+        """调用远程工具端点（预留扩展）。"""
+        # 这里可以实现 HTTP 调用远程工具的逻辑
+        return {
+            "note": f"[Remote Tool Stub] 工具 {capability.capability_key} 远程调用待实现",
+            "endpoint": capability.endpoint,
+            "echo": input_data,
+        }
 
     async def _invoke_skill(self, capability: Capability, input_data: dict, context: dict) -> dict:
         result = await self._db.execute(select(Skill).where(Skill.skill_key == capability.ref_id))
