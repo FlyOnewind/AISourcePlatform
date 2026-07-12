@@ -74,3 +74,51 @@ containing this report).
   After verifying it had no Gateway tables, it was safely stamped at `0001` and upgraded to
   `0002` so the required drift check could run. Fresh-database upgrade/downgrade behavior is
   independently covered by the tests.
+
+## Review fixes (2026-07-12)
+
+### Commits
+
+- Initial Task 3 implementation: `6af87eb` (`6af87ebff5206f4c381904f429bf89a0c3ad527a`).
+- Persistence review fixes: `3c2a6d9` (`3c2a6d933a73720bb1f7baee93670ece695d0ca6`).
+
+### RED evidence
+
+After adding the review regressions and before changing production code, the focused command
+
+`python -m pytest tests/gateway/test_gateway_models.py -q`
+
+reported `3 failed, 24 passed`. The expected failures proved that:
+
+- `ck_capability_invocation_protocol` was absent from SQLAlchemy metadata;
+- an unsupported persisted invocation protocol did not raise `IntegrityError`;
+- a direct PostgreSQL update could change `capability_version`.
+
+### GREEN evidence
+
+- Focused Gateway suite: `27 passed in 15.42s`.
+- Required regression suite: `35 passed in 28.88s`.
+- Full project suite: `68 passed, 1 warning in 65.42s`.
+- Revised `0002` downgrade to `0001` and upgrade to head both completed successfully.
+- `uv run alembic check`: `No new upgrade operations detected.`
+- `git diff --check`: exit code 0.
+
+All pytest and Alembic commands used
+`postgresql+asyncpg://kbplatform:kbplatform@127.0.0.1:5432/kbplatform`.
+
+### Review-fix scope
+
+- Added the exact supported-protocol check to both `CapabilityInvocation` metadata and
+  revision `0002`.
+- Added a PostgreSQL trigger/function that rejects changes to an inserted invocation's
+  `capability_version`, including direct/bulk SQL, while allowing status updates.
+- Added explicit trigger/function removal to downgrade and verified the function is absent.
+- Audited required constraints and unique/partial indexes in SQLAlchemy metadata and the
+  PostgreSQL catalog after a fresh migration.
+- Verified identical endpoint environment/name pairs remain valid across capabilities.
+
+### Review concerns
+
+- The full suite still emits the unrelated Qdrant server-version compatibility warning.
+- The local Gateway tables were verified empty before rebuilding revision `0002` to exercise
+  the revised migration; no application data was removed.
