@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://kbplatform:kbplatform@localhost:5432/kbplatform"
 
     redis_url: str = "redis://localhost:6379/0"
+    gateway_redis_prefix: str = "gateway"
 
     qdrant_url: str = "http://localhost:6333"
     qdrant_collection_prefix: str = "kb_"
