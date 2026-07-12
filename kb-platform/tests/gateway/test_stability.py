@@ -138,6 +138,23 @@ async def test_idempotency_completion_is_returned_to_duplicates(store):
     assert decision.result is not result
 
 
+async def test_competing_duplicate_completions_preserve_the_established_result(store):
+    first_result = {"winner": "first"}
+    second_result = {"winner": "second"}
+    await store.reserve("scope", "hash", 60)
+
+    await asyncio.gather(
+        store.complete("scope", "hash", first_result, 60),
+        store.complete("scope", "hash", second_result, 60),
+    )
+    established = (await store.reserve("scope", "hash", 60)).result
+    competing = second_result if established == first_result else first_result
+
+    await store.complete("scope", "hash", competing, 60)
+
+    assert (await store.reserve("scope", "hash", 60)).result == established
+
+
 async def test_idempotency_complete_rejects_a_different_payload_hash(store):
     await store.reserve("scope", "hash-a", 60)
 
@@ -220,7 +237,7 @@ async def test_redis_clients_with_byte_responses_are_supported(namespace):
         breaker = CircuitBreaker(client, namespace, clock=ManualClock())
         await breaker.record_failure("endpoint", 1, 10)
         with pytest.raises(GatewayError) as exc:
-            await breaker.before_call("endpoint", 1, 10)
+            await breaker.before_call("endpoint", 1, 10, 30)
         assert exc.value.code == "CIRCUIT_OPEN"
     finally:
         await client.aclose()
@@ -250,20 +267,21 @@ def breaker(redis_client, namespace, clock):
 
 
 async def test_circuit_starts_closed(breaker):
-    assert await breaker.before_call("endpoint", 2, 10) == CircuitDecision(
+    assert await breaker.before_call("endpoint", 2, 10, 30) == CircuitDecision(
         state="closed",
         probe_allowed=False,
+        probe_token=None,
     )
 
 
 async def test_circuit_opens_only_at_failure_threshold(breaker):
     await breaker.record_failure("endpoint", failure_threshold=2, reset_seconds=10)
-    assert (await breaker.before_call("endpoint", 2, 10)).state == "closed"
+    assert (await breaker.before_call("endpoint", 2, 10, 30)).state == "closed"
 
     await breaker.record_failure("endpoint", failure_threshold=2, reset_seconds=10)
 
     with pytest.raises(GatewayError) as exc:
-        await breaker.before_call("endpoint", 2, 10)
+        await breaker.before_call("endpoint", 2, 10, 30)
     assert exc.value.code == "CIRCUIT_OPEN"
     assert exc.value.retryable is True
     assert exc.value.details["retry_after_ms"] > 0
@@ -272,7 +290,7 @@ async def test_circuit_opens_only_at_failure_threshold(breaker):
 async def test_circuit_state_is_endpoint_specific(breaker):
     await breaker.record_failure("endpoint-a", failure_threshold=1, reset_seconds=10)
 
-    assert (await breaker.before_call("endpoint-b", 1, 10)).state == "closed"
+    assert (await breaker.before_call("endpoint-b", 1, 10, 30)).state == "closed"
 
 
 async def test_only_one_half_open_probe_is_allowed(breaker, clock):
@@ -280,8 +298,8 @@ async def test_only_one_half_open_probe_is_allowed(breaker, clock):
     clock.advance(11)
 
     first, second = await asyncio.gather(
-        breaker.before_call("endpoint", 1, 10),
-        breaker.before_call("endpoint", 1, 10),
+        breaker.before_call("endpoint", 1, 10, 30),
+        breaker.before_call("endpoint", 1, 10, 30),
         return_exceptions=True,
     )
 
@@ -289,31 +307,113 @@ async def test_only_one_half_open_probe_is_allowed(breaker, clock):
         isinstance(value, CircuitDecision) and value.probe_allowed
         for value in (first, second)
     ) == 1
+    admitted = next(value for value in (first, second) if isinstance(value, CircuitDecision))
+    assert admitted.probe_token
     rejected = next(value for value in (first, second) if isinstance(value, GatewayError))
     assert rejected.code == "CIRCUIT_OPEN"
     assert rejected.details["retry_after_ms"] > 0
 
 
+async def test_slow_half_open_probe_remains_exclusive_for_probe_lease(
+    redis_client,
+    namespace,
+    clock,
+):
+    first_breaker = CircuitBreaker(redis_client, namespace, clock=clock)
+    second_breaker = CircuitBreaker(redis_client, namespace, clock=clock)
+    await first_breaker.record_failure("endpoint", failure_threshold=1, reset_seconds=1)
+    clock.advance(2)
+    first = await first_breaker.before_call("endpoint", 1, 1, 5)
+
+    clock.advance(2)
+    with pytest.raises(GatewayError) as exc:
+        await second_breaker.before_call("endpoint", 1, 1, 5)
+
+    assert first.probe_allowed is True
+    assert first.probe_token
+    assert exc.value.code == "CIRCUIT_OPEN"
+    assert exc.value.details["retry_after_ms"] == 3_000
+
+
+async def test_expired_probe_lease_allows_a_new_owner(breaker, clock):
+    await breaker.record_failure("endpoint", failure_threshold=1, reset_seconds=1)
+    clock.advance(2)
+    first = await breaker.before_call("endpoint", 1, 1, 5)
+
+    clock.advance(6)
+    second = await breaker.before_call("endpoint", 1, 1, 5)
+
+    assert first.probe_token
+    assert second.probe_token
+    assert second.probe_token != first.probe_token
+
+
 async def test_half_open_probe_success_closes_circuit(breaker, clock):
     await breaker.record_failure("endpoint", failure_threshold=1, reset_seconds=10)
     clock.advance(11)
-    assert (await breaker.before_call("endpoint", 1, 10)).state == "half_open"
+    probe = await breaker.before_call("endpoint", 1, 10, 30)
+    assert probe.state == "half_open"
 
-    await breaker.record_success("endpoint")
+    await breaker.record_success("endpoint", probe_token=probe.probe_token)
 
-    assert (await breaker.before_call("endpoint", 1, 10)).state == "closed"
+    assert (await breaker.before_call("endpoint", 1, 10, 30)).state == "closed"
 
 
 async def test_half_open_probe_failure_reopens_and_resets_timer(breaker, clock):
     await breaker.record_failure("endpoint", failure_threshold=1, reset_seconds=10)
     clock.advance(11)
-    await breaker.before_call("endpoint", 1, 10)
+    probe = await breaker.before_call("endpoint", 1, 10, 30)
 
-    await breaker.record_failure("endpoint", failure_threshold=1, reset_seconds=10)
+    await breaker.record_failure(
+        "endpoint",
+        failure_threshold=1,
+        reset_seconds=10,
+        probe_token=probe.probe_token,
+    )
 
     with pytest.raises(GatewayError) as exc:
-        await breaker.before_call("endpoint", 1, 10)
+        await breaker.before_call("endpoint", 1, 10, 30)
     assert exc.value.details["retry_after_ms"] == 10_000
+
+
+async def test_stale_pre_open_success_cannot_clear_open_circuit(breaker):
+    await breaker.record_failure("endpoint", failure_threshold=2, reset_seconds=10)
+    await breaker.record_failure("endpoint", failure_threshold=2, reset_seconds=10)
+
+    await breaker.record_success("endpoint")
+
+    with pytest.raises(GatewayError) as exc:
+        await breaker.before_call("endpoint", 2, 10, 30)
+    assert exc.value.code == "CIRCUIT_OPEN"
+
+
+async def test_stale_probe_success_cannot_close_another_probe_lease(breaker, clock):
+    await breaker.record_failure("endpoint", failure_threshold=1, reset_seconds=1)
+    clock.advance(2)
+    probe = await breaker.before_call("endpoint", 1, 1, 10)
+
+    await breaker.record_success("endpoint", probe_token="stale-token")
+
+    with pytest.raises(GatewayError):
+        await breaker.before_call("endpoint", 1, 1, 10)
+    await breaker.record_success("endpoint", probe_token=probe.probe_token)
+    assert (await breaker.before_call("endpoint", 1, 1, 10)).state == "closed"
+
+
+async def test_stale_probe_failure_cannot_reopen_another_probe_lease(breaker, clock):
+    await breaker.record_failure("endpoint", failure_threshold=1, reset_seconds=1)
+    clock.advance(2)
+    probe = await breaker.before_call("endpoint", 1, 1, 10)
+
+    await breaker.record_failure(
+        "endpoint",
+        failure_threshold=1,
+        reset_seconds=1,
+        probe_token="stale-token",
+    )
+
+    await breaker.record_success("endpoint", probe_token=probe.probe_token)
+    assert (await breaker.before_call("endpoint", 1, 1, 10)).state == "closed"
 
 
 async def test_circuit_state_has_conservative_expiry(breaker, redis_client, namespace):
@@ -330,10 +430,16 @@ async def test_circuit_state_has_conservative_expiry(breaker, redis_client, name
 )
 async def test_circuit_rejects_invalid_configuration(breaker, threshold, reset_seconds):
     with pytest.raises(ValueError):
-        await breaker.before_call("endpoint", threshold, reset_seconds)
+        await breaker.before_call("endpoint", threshold, reset_seconds, 30)
 
     with pytest.raises(ValueError):
         await breaker.record_failure("endpoint", threshold, reset_seconds)
+
+
+@pytest.mark.parametrize("probe_lease_seconds", [0, -1])
+async def test_circuit_rejects_non_positive_probe_lease(breaker, probe_lease_seconds):
+    with pytest.raises(ValueError, match="probe_lease_seconds"):
+        await breaker.before_call("endpoint", 1, 10, probe_lease_seconds)
 
 
 async def test_circuit_fails_closed_when_redis_is_unavailable(namespace):
@@ -341,7 +447,7 @@ async def test_circuit_fails_closed_when_redis_is_unavailable(namespace):
     breaker = CircuitBreaker(unavailable, namespace)
     try:
         with pytest.raises(GatewayError) as exc:
-            await breaker.before_call("endpoint", 1, 10)
+            await breaker.before_call("endpoint", 1, 10, 30)
     finally:
         await unavailable.aclose()
 

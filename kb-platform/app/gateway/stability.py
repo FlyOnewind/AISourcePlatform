@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, Literal
+from uuid import uuid4
 
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
@@ -62,6 +63,9 @@ end
 if values[1] ~= ARGV[1] then
     return 'reused'
 end
+if values[2] == 'completed' then
+    return 'completed'
+end
 redis.call('HSET', KEYS[1], 'status', 'completed', 'result', ARGV[2])
 redis.call('EXPIRE', KEYS[1], tonumber(ARGV[3]))
 return 'completed'
@@ -76,11 +80,12 @@ return 0
 """
 
 _CIRCUIT_BEFORE_SCRIPT = """
-local values = redis.call('HMGET', KEYS[1], 'state', 'opened_at_ms', 'probe_at_ms')
+local values = redis.call('HMGET', KEYS[1], 'state', 'opened_at_ms', 'probe_lease_until_ms')
 local state = values[1]
 local now_ms = tonumber(ARGV[1])
 local reset_ms = tonumber(ARGV[2])
-local ttl_ms = tonumber(ARGV[3])
+local probe_lease_ms = tonumber(ARGV[3])
+local ttl_ms = tonumber(ARGV[4])
 if not state or state == 'closed' then
     return {'closed', 0}
 end
@@ -89,37 +94,63 @@ if state == 'open' then
     if elapsed_ms < reset_ms then
         return {'open', math.max(1, reset_ms - elapsed_ms)}
     end
-    redis.call('HSET', KEYS[1], 'state', 'half_open', 'probe_at_ms', now_ms)
+    redis.call('HSET', KEYS[1], 'state', 'half_open', 'probe_token', ARGV[5],
+        'probe_lease_until_ms', now_ms + probe_lease_ms)
     redis.call('PEXPIRE', KEYS[1], ttl_ms)
-    return {'half_open', 0}
+    return {'half_open', 0, ARGV[5]}
 end
 
-local probe_elapsed_ms = math.max(0, now_ms - tonumber(values[3]))
-if probe_elapsed_ms >= reset_ms then
-    redis.call('HSET', KEYS[1], 'probe_at_ms', now_ms)
+local probe_lease_until_ms = tonumber(values[3]) or 0
+if now_ms >= probe_lease_until_ms then
+    redis.call('HSET', KEYS[1], 'probe_token', ARGV[5],
+        'probe_lease_until_ms', now_ms + probe_lease_ms)
     redis.call('PEXPIRE', KEYS[1], ttl_ms)
-    return {'half_open', 0}
+    return {'half_open', 0, ARGV[5]}
 end
-return {'open', math.max(1, reset_ms - probe_elapsed_ms)}
+return {'open', math.max(1, probe_lease_until_ms - now_ms)}
 """
 
 _CIRCUIT_FAILURE_SCRIPT = """
-local state = redis.call('HGET', KEYS[1], 'state')
+local values = redis.call('HMGET', KEYS[1], 'state', 'probe_token')
+local state = values[1]
 local threshold = tonumber(ARGV[1])
 local failures
-if state == 'half_open' or state == 'open' then
+if ARGV[4] ~= '' then
+    if state ~= 'half_open' or values[2] ~= ARGV[4] then
+        return 'stale'
+    end
     failures = threshold
 else
+    if state and state ~= 'closed' then
+        return 'stale'
+    end
     failures = redis.call('HINCRBY', KEYS[1], 'failures', 1)
 end
 if failures >= threshold then
     redis.call('HSET', KEYS[1], 'state', 'open', 'failures', threshold, 'opened_at_ms', ARGV[2])
-    redis.call('HDEL', KEYS[1], 'probe_at_ms')
+    redis.call('HDEL', KEYS[1], 'probe_token', 'probe_lease_until_ms')
 else
     redis.call('HSET', KEYS[1], 'state', 'closed')
 end
 redis.call('PEXPIRE', KEYS[1], tonumber(ARGV[3]))
 return failures
+"""
+
+_CIRCUIT_SUCCESS_SCRIPT = """
+local values = redis.call('HMGET', KEYS[1], 'state', 'probe_token')
+local state = values[1]
+if ARGV[1] ~= '' then
+    if state == 'half_open' and values[2] == ARGV[1] then
+        redis.call('DEL', KEYS[1])
+        return 'closed'
+    end
+    return 'stale'
+end
+if state == 'closed' then
+    redis.call('DEL', KEYS[1])
+    return 'closed'
+end
+return 'stale'
 """
 
 
@@ -140,6 +171,7 @@ class IdempotencyDecision:
 class CircuitDecision:
     state: Literal["closed", "open", "half_open"]
     probe_allowed: bool
+    probe_token: str | None
 
 
 def _redis_unavailable(operation: str, error: RedisError) -> GatewayError:
@@ -351,9 +383,18 @@ class CircuitBreaker:
         key: str,
         failure_threshold: int,
         reset_seconds: int,
+        probe_lease_seconds: int,
     ) -> CircuitDecision:
+        """Check admission.
+
+        ``probe_lease_seconds`` must be at least the endpoint's maximum execution
+        timeout so a still-running probe cannot overlap a replacement probe.
+        """
         self._validate(failure_threshold, reset_seconds)
+        if probe_lease_seconds <= 0:
+            raise ValueError("probe_lease_seconds must be positive")
         reset_ms = reset_seconds * 1_000
+        probe_lease_ms = probe_lease_seconds * 1_000
         try:
             values = await self._redis.eval(
                 _CIRCUIT_BEFORE_SCRIPT,
@@ -361,7 +402,9 @@ class CircuitBreaker:
                 self._key(key),
                 math.floor(self._clock() * 1_000),
                 reset_ms,
-                reset_ms * 10,
+                probe_lease_ms,
+                max(reset_ms, probe_lease_ms) * 10,
+                uuid4().hex,
             )
         except RedisError as error:
             raise _redis_unavailable("circuit check", error) from error
@@ -376,11 +419,17 @@ class CircuitBreaker:
         return CircuitDecision(
             state=state,
             probe_allowed=state == "half_open",
+            probe_token=_text(values[2]) if state == "half_open" else None,
         )
 
-    async def record_success(self, key: str) -> None:
+    async def record_success(self, key: str, probe_token: str | None = None) -> None:
         try:
-            await self._redis.delete(self._key(key))
+            await self._redis.eval(
+                _CIRCUIT_SUCCESS_SCRIPT,
+                1,
+                self._key(key),
+                probe_token or "",
+            )
         except RedisError as error:
             raise _redis_unavailable("circuit success recording", error) from error
 
@@ -389,6 +438,7 @@ class CircuitBreaker:
         key: str,
         failure_threshold: int,
         reset_seconds: int,
+        probe_token: str | None = None,
     ) -> None:
         self._validate(failure_threshold, reset_seconds)
         reset_ms = reset_seconds * 1_000
@@ -400,6 +450,7 @@ class CircuitBreaker:
                 failure_threshold,
                 math.floor(self._clock() * 1_000),
                 reset_ms * 10,
+                probe_token or "",
             )
         except RedisError as error:
             raise _redis_unavailable("circuit failure recording", error) from error
