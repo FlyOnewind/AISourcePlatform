@@ -179,6 +179,13 @@ def test_sqlalchemy_metadata_contains_all_gateway_checks_and_unique_indexes():
     assert {("capability_id", "environment", "name")} <= _unique_column_sets(
         "capability_endpoints"
     )
+    capability_index = next(
+        index
+        for index in Base.metadata.tables["capability_endpoints"].indexes
+        if index.name == "ix_capability_endpoints_capability_id"
+    )
+    assert tuple(capability_index.columns.keys()) == ("capability_id",)
+    assert capability_index.unique is False
 
     assert "ck_capability_invocation_protocol" in _check_constraint_names(
         "capability_invocations"
@@ -289,6 +296,10 @@ async def test_fresh_alembic_upgrade_creates_all_gateway_tables():
             ("a2a_agents", "a2a_agents_endpoint_id_key"),
         } <= set(constraints)
         indexes = {row["indexname"]: row["indexdef"] for row in index_rows}
+        endpoint_capability_index = indexes["ix_capability_endpoints_capability_id"]
+        assert "CREATE INDEX" in endpoint_capability_index
+        assert "UNIQUE" not in endpoint_capability_index
+        assert "(capability_id)" in endpoint_capability_index
         assert "UNIQUE" in indexes["ix_capability_invocations_invocation_key"]
         assert "UNIQUE" in indexes["ix_mcp_servers_server_key"]
         assert "UNIQUE" in indexes["ix_a2a_agents_agent_key"]
