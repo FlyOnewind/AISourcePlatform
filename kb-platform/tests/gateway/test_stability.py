@@ -219,6 +219,24 @@ async def test_idempotency_completion_refreshes_ttl(store, redis_client, namespa
     assert await redis_client.pttl(key) > 1_000
 
 
+async def test_duplicate_completion_preserves_result_and_refreshes_ttl(
+    store,
+    redis_client,
+    namespace,
+):
+    canonical = {"winner": "canonical"}
+    await store.reserve("scope", "hash", 60)
+    await store.complete("scope", "hash", canonical, 60)
+    key = f"gateway:{namespace}:idempotency:scope"
+    await redis_client.pexpire(key, 100)
+
+    await store.complete("scope", "hash", {"winner": "late"}, 2)
+
+    decision = await store.reserve("scope", "hash", 60)
+    assert decision.result == canonical
+    assert await redis_client.pttl(key) > 1_000
+
+
 async def test_only_one_concurrent_idempotency_reservation_is_new(store):
     decisions = await asyncio.gather(*(store.reserve("scope", "hash", 60) for _ in range(20)))
 

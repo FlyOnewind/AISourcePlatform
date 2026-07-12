@@ -64,6 +64,7 @@ if values[1] ~= ARGV[1] then
     return 'reused'
 end
 if values[2] == 'completed' then
+    redis.call('EXPIRE', KEYS[1], tonumber(ARGV[3]))
     return 'completed'
 end
 redis.call('HSET', KEYS[1], 'status', 'completed', 'result', ARGV[2])
