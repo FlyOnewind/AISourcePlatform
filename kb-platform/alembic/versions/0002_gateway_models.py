@@ -101,6 +101,10 @@ def upgrade() -> None:
         sa.Column("request_metadata", postgresql.JSONB(), server_default=sa.text("'{}'::jsonb"), nullable=False),
         sa.Column("result_metadata", postgresql.JSONB(), server_default=sa.text("'{}'::jsonb"), nullable=False),
         *_timestamps(),
+        sa.CheckConstraint(
+            "protocol IN ('http', 'mcp', 'grpc', 'a2a', 'hosted')",
+            name="ck_capability_invocation_protocol",
+        ),
         sa.ForeignKeyConstraint(["capability_id"], ["capabilities.id"]),
         sa.ForeignKeyConstraint(["endpoint_id"], ["capability_endpoints.id"]),
         sa.PrimaryKeyConstraint("id"),
@@ -123,6 +127,30 @@ def upgrade() -> None:
         ["capability_id", "capability_version", "caller_type", "caller_id", "idempotency_key"],
         unique=True,
         postgresql_where=sa.text("idempotency_key IS NOT NULL"),
+    )
+    op.execute(
+        """
+        CREATE FUNCTION prevent_capability_invocation_version_update()
+        RETURNS trigger
+        LANGUAGE plpgsql
+        AS $$
+        BEGIN
+            IF NEW.capability_version IS DISTINCT FROM OLD.capability_version THEN
+                RAISE EXCEPTION 'capability_version is immutable'
+                    USING ERRCODE = '23514';
+            END IF;
+            RETURN NEW;
+        END;
+        $$
+        """
+    )
+    op.execute(
+        """
+        CREATE TRIGGER trg_capability_invocation_version_immutable
+        BEFORE UPDATE OF capability_version ON capability_invocations
+        FOR EACH ROW
+        EXECUTE FUNCTION prevent_capability_invocation_version_update()
+        """
     )
 
     op.create_table(
@@ -194,6 +222,11 @@ def downgrade() -> None:
     op.drop_table("grpc_descriptors")
     op.drop_index(op.f("ix_mcp_servers_server_key"), table_name="mcp_servers")
     op.drop_table("mcp_servers")
+    op.execute(
+        "DROP TRIGGER IF EXISTS trg_capability_invocation_version_immutable "
+        "ON capability_invocations"
+    )
+    op.execute("DROP FUNCTION IF EXISTS prevent_capability_invocation_version_update()")
     op.drop_index("uq_capability_invocation_idempotency", table_name="capability_invocations")
     op.drop_index(op.f("ix_capability_invocations_invocation_key"), table_name="capability_invocations")
     op.drop_index(op.f("ix_capability_invocations_capability_id"), table_name="capability_invocations")

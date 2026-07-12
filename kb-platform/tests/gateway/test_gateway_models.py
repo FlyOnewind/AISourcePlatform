@@ -9,6 +9,7 @@ from pathlib import Path
 import asyncpg
 import pytest
 from pydantic import ValidationError
+from sqlalchemy import CheckConstraint, Index, UniqueConstraint
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import IntegrityError
 
@@ -146,6 +147,56 @@ def test_sqlalchemy_metadata_contains_gateway_tables_and_constraints():
     )
 
 
+def _check_constraint_names(table_name):
+    return {
+        constraint.name
+        for constraint in Base.metadata.tables[table_name].constraints
+        if isinstance(constraint, CheckConstraint)
+    }
+
+
+def _unique_column_sets(table_name):
+    table = Base.metadata.tables[table_name]
+    constraints = {
+        tuple(constraint.columns.keys())
+        for constraint in table.constraints
+        if isinstance(constraint, UniqueConstraint)
+    }
+    indexes = {
+        tuple(index.columns.keys())
+        for index in table.indexes
+        if isinstance(index, Index) and index.unique
+    }
+    return constraints | indexes
+
+
+def test_sqlalchemy_metadata_contains_all_gateway_checks_and_unique_indexes():
+    assert {
+        "ck_capability_endpoint_protocol",
+        "ck_capability_endpoint_priority",
+        "ck_capability_endpoint_weight",
+    } <= _check_constraint_names("capability_endpoints")
+    assert {("capability_id", "environment", "name")} <= _unique_column_sets(
+        "capability_endpoints"
+    )
+
+    assert "ck_capability_invocation_protocol" in _check_constraint_names(
+        "capability_invocations"
+    )
+    assert {("invocation_key",)} <= _unique_column_sets("capability_invocations")
+
+    assert "ck_mcp_server_transport" in _check_constraint_names("mcp_servers")
+    assert {("server_key",), ("endpoint_id",)} <= _unique_column_sets("mcp_servers")
+
+    assert {
+        "ck_grpc_descriptor_source",
+        "ck_grpc_descriptor_set_artifact",
+    } <= _check_constraint_names("grpc_descriptors")
+    assert {("endpoint_id", "version")} <= _unique_column_sets("grpc_descriptors")
+
+    assert {("agent_key",), ("endpoint_id",)} <= _unique_column_sets("a2a_agents")
+
+
 async def _migration_database():
     source_url = make_url(os.environ["DATABASE_URL"])
     database_name = f"kbplatform_gateway_{uuid.uuid4().hex}"
@@ -200,9 +251,50 @@ async def test_fresh_alembic_upgrade_creates_all_gateway_tables():
             rows = await connection.fetch(
                 "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
             )
+            constraint_rows = await connection.fetch(
+                """
+                SELECT conrelid::regclass::text AS table_name, conname, contype,
+                       pg_get_constraintdef(oid) AS definition
+                FROM pg_constraint
+                WHERE conrelid = ANY($1::regclass[])
+                """,
+                sorted(GATEWAY_TABLES),
+            )
+            index_rows = await connection.fetch(
+                """
+                SELECT tablename, indexname, indexdef
+                FROM pg_indexes
+                WHERE schemaname = 'public' AND tablename = ANY($1::text[])
+                """,
+                sorted(GATEWAY_TABLES),
+            )
         finally:
             await connection.close()
         assert GATEWAY_TABLES <= {row["table_name"] for row in rows}
+        constraints = {
+            (row["table_name"], row["conname"]): row["definition"]
+            for row in constraint_rows
+        }
+        assert {
+            ("capability_endpoints", "ck_capability_endpoint_protocol"),
+            ("capability_endpoints", "ck_capability_endpoint_priority"),
+            ("capability_endpoints", "ck_capability_endpoint_weight"),
+            ("capability_endpoints", "uq_capability_endpoint_environment_name"),
+            ("capability_invocations", "ck_capability_invocation_protocol"),
+            ("mcp_servers", "ck_mcp_server_transport"),
+            ("mcp_servers", "mcp_servers_endpoint_id_key"),
+            ("grpc_descriptors", "ck_grpc_descriptor_source"),
+            ("grpc_descriptors", "ck_grpc_descriptor_set_artifact"),
+            ("grpc_descriptors", "uq_grpc_descriptor_endpoint_version"),
+            ("a2a_agents", "a2a_agents_endpoint_id_key"),
+        } <= set(constraints)
+        indexes = {row["indexname"]: row["indexdef"] for row in index_rows}
+        assert "UNIQUE" in indexes["ix_capability_invocations_invocation_key"]
+        assert "UNIQUE" in indexes["ix_mcp_servers_server_key"]
+        assert "UNIQUE" in indexes["ix_a2a_agents_agent_key"]
+        assert "WHERE (idempotency_key IS NOT NULL)" in indexes[
+            "uq_capability_invocation_idempotency"
+        ]
     finally:
         await _drop_migration_database(database_name, admin_connection)
 
@@ -225,6 +317,14 @@ async def test_downgrade_0002_removes_only_gateway_tables():
         existing = {row["table_name"] for row in rows}
         assert not (GATEWAY_TABLES & existing)
         assert {"capabilities", "agents", "knowledge_bases", "audit_logs"} <= existing
+        connection = await asyncpg.connect(target_dsn)
+        try:
+            immutable_function = await connection.fetchval(
+                "SELECT to_regprocedure('prevent_capability_invocation_version_update()')"
+            )
+        finally:
+            await connection.close()
+        assert immutable_function is None
     finally:
         await _drop_migration_database(database_name, admin_connection)
 
@@ -269,6 +369,33 @@ async def test_endpoint_name_uniqueness_is_scoped_to_capability_and_environment(
 
 
 @pytest.mark.asyncio
+async def test_same_endpoint_environment_and_name_are_allowed_for_different_capabilities(db_session):
+    first = Capability(capability_key="endpoint-first", type="tool", name="First")
+    second = Capability(capability_key="endpoint-second", type="tool", name="Second")
+    db_session.add_all([first, second])
+    await db_session.flush()
+    db_session.add_all(
+        [
+            CapabilityEndpoint(
+                capability_id=first.id,
+                name="primary",
+                protocol="http",
+                target="https://first.example.test",
+                environment="production",
+            ),
+            CapabilityEndpoint(
+                capability_id=second.id,
+                name="primary",
+                protocol="http",
+                target="https://second.example.test",
+                environment="production",
+            ),
+        ]
+    )
+    await db_session.commit()
+
+
+@pytest.mark.asyncio
 async def test_invocation_partial_idempotency_uniqueness(db_session):
     capability = Capability(capability_key="idempotency-scope", type="tool", name="Idempotency scope")
     db_session.add(capability)
@@ -296,3 +423,79 @@ async def test_invocation_partial_idempotency_uniqueness(db_session):
     with pytest.raises(IntegrityError):
         await db_session.commit()
     await db_session.rollback()
+
+
+@pytest.mark.asyncio
+async def test_invocation_rejects_unsupported_protocol_at_persistence(db_session):
+    capability = Capability(capability_key="protocol-check", type="tool", name="Protocol check")
+    db_session.add(capability)
+    await db_session.flush()
+    db_session.add(
+        CapabilityInvocation(
+            invocation_key="invalid-protocol",
+            capability_id=capability.id,
+            capability_version="1.0.0",
+            caller_type="agent",
+            caller_id="planner",
+            status="pending",
+            protocol="websocket",
+            input_digest="sha256:input",
+            output_digest="sha256:output",
+        )
+    )
+    with pytest.raises(IntegrityError):
+        await db_session.commit()
+    await db_session.rollback()
+
+
+@pytest.mark.asyncio
+async def test_migrated_database_prevents_capability_version_update_but_allows_status_update():
+    database_name, target_url, target_dsn, admin_connection = await _migration_database()
+    try:
+        upgrade = _run_alembic(target_url, "upgrade", "head")
+        assert upgrade.returncode == 0, upgrade.stdout + upgrade.stderr
+        connection = await asyncpg.connect(target_dsn)
+        try:
+            capability_id = uuid.uuid4()
+            invocation_id = uuid.uuid4()
+            await connection.execute(
+                """
+                INSERT INTO capabilities (
+                    id, capability_key, type, name, tags, scenarios, input_schema,
+                    output_schema, examples, security_level, allowed_agent_roles,
+                    status, current_version, timeout_ms, side_effect, metadata
+                ) VALUES (
+                    $1, 'immutable-version', 'tool', 'Immutable version', '{}', '{}',
+                    '{}', '{}', '[]', 'internal', '{}', 'published', '1.0.0',
+                    30000, 'read_only', '{}'
+                )
+                """,
+                capability_id,
+            )
+            await connection.execute(
+                """
+                INSERT INTO capability_invocations (
+                    id, invocation_key, capability_id, capability_version, caller_type,
+                    caller_id, status, protocol, input_digest, output_digest
+                ) VALUES ($1, 'immutable-invocation', $2, '1.0.0', 'agent', 'planner',
+                    'pending', 'http', 'sha256:input', 'sha256:output')
+                """,
+                invocation_id,
+                capability_id,
+            )
+
+            with pytest.raises(asyncpg.CheckViolationError, match="capability_version is immutable"):
+                await connection.execute(
+                    "UPDATE capability_invocations SET capability_version = '2.0.0' WHERE id = $1",
+                    invocation_id,
+                )
+
+            result = await connection.execute(
+                "UPDATE capability_invocations SET status = 'completed' WHERE id = $1",
+                invocation_id,
+            )
+            assert result == "UPDATE 1"
+        finally:
+            await connection.close()
+    finally:
+        await _drop_migration_database(database_name, admin_connection)

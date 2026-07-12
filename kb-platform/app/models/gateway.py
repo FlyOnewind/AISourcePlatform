@@ -64,6 +64,10 @@ class CapabilityEndpoint(Base, TimestampMixin):
 class CapabilityInvocation(Base, TimestampMixin):
     __tablename__ = "capability_invocations"
     __table_args__ = (
+        CheckConstraint(
+            "protocol IN ('http', 'mcp', 'grpc', 'a2a', 'hosted')",
+            name="ck_capability_invocation_protocol",
+        ),
         Index(
             "uq_capability_invocation_idempotency",
             "capability_id",
