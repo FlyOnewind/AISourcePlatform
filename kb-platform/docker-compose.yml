@@ -10,7 +10,7 @@ services:
       POSTGRES_PASSWORD: kbplatform
       POSTGRES_DB: kbplatform
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - kb_pg_data:/var/lib/postgresql/data
     healthcheck:
@@ -24,7 +24,7 @@ services:
     container_name: kb_platform_redis
     restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "6378:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -50,8 +50,8 @@ services:
       MINIO_ROOT_USER: kbplatform
       MINIO_ROOT_PASSWORD: kbplatform123
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "9002:9000"
+      - "9003:9001"
     volumes:
       - kb_minio_data:/data
     healthcheck:
