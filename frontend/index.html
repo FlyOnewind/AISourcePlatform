@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>知识库系统 - Knowledge Base</title>
+
+  <!-- 字体：思源黑体（界面正文）+ JetBrains Mono（编号/分数等宽显示） -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;600;700;900&family=Noto+Sans+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <!-- 全局样式 -->
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <!-- ===================================================================
+       应用外壳 — 整体布局容器（侧边栏 + 主内容区）
+       =================================================================== -->
+  <div id="app" class="app-shell">
+
+    <!-- ===================================================================
+         侧边栏 — 品牌标识 + 导航菜单
+         包含：品牌文字（知识库）、导航项（由 JS 动态渲染）
+         =================================================================== -->
+    <aside id="sidebar" class="sidebar">
+      <!-- 品牌区域：应用名称和英文副标题 -->
+      <div class="sidebar-brand">
+        <h1>知识库</h1>
+        <span>Knowledge Base System</span>
+      </div>
+      <!-- 导航菜单：由 router.js 根据注册的路由动态生成导航项 -->
+      <nav class="sidebar-nav" id="sidebarNav">
+        <!-- JS 动态渲染导航项 -->
+      </nav>
+    </aside>
+
+    <!-- ===================================================================
+         主内容区 — 顶部栏 + 页面内容
+         =================================================================== -->
+    <div class="main-area">
+      <!-- 顶部栏：面包屑导航 + 服务状态指示器 + 移动端菜单按钮 -->
+      <header class="topbar">
+        <!-- 移动端菜单按钮（仅在窄屏显示） -->
+        <button class="mobile-menu-btn" id="mobileMenuBtn" aria-label="菜单">☰</button>
+        <!-- 面包屑：显示当前页面路径 -->
+        <div class="topbar-breadcrumb" id="breadcrumb">
+          <span>仪表盘</span>
+        </div>
+        <!-- 顶部操作区：服务状态指示器 -->
+        <div class="topbar-actions">
+          <span id="serviceStatus" class="service-status-indicator" title="点击查看服务详情">
+            <span class="service-status-icon">◉</span>
+            <span class="service-status-label">检查中…</span>
+          </span>
+        </div>
+      </header>
+
+      <!-- 页面内容区域：由 JS 路由系统根据当前 URL 渲染对应的页面组件 -->
+      <main class="content" id="content">
+        <!-- 初始加载遮罩 -->
+        <div class="loading-overlay">
+          <div class="loading-spinner"></div>
+          <span>加载中…</span>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <!-- ===================================================================
+       模态框容器 — 所有弹窗（确认框、表单弹窗等）渲染在此处
+       由 common.js 的 UI.showModal() 动态创建
+       =================================================================== -->
+  <div id="modalContainer"></div>
+
+  <!-- ===================================================================
+       Toast 消息容器 — 操作反馈通知（成功/失败/提示）
+       由 common.js 的 UI.showToast() 动态创建
+       =================================================================== -->
+  <div id="toastContainer" class="toast-container"></div>
+
+  <!-- ===================================================================
+       JavaScript 模块 — 按依赖顺序加载
+
+       加载顺序说明：
+       1. api.js      — 后端 API 调用封装（底层依赖，所有页面组件共用）
+       2. router.js   — 前端哈希路由（URL # 导航管理，app.js 初始化时使用）
+       3. common.js   — 通用 UI 组件（模态框/Toast/抽屉/工具函数，所有页面共用）
+       4. dashboard.js — 仪表盘页面组件
+       5. documents.js — 文档管理页面组件（含上传功能）
+       6. document-detail.js — 文档详情页面组件
+       7. search.js   — 知识搜索页面组件
+       8. chunks.js   — 知识块管理页面组件
+       9. app.js      — 应用入口：初始化路由、渲染首屏、全局事件绑定
+       =================================================================== -->
+  <script src="js/api.js"></script>
+  <script src="js/router.js"></script>
+  <script src="js/components/common.js"></script>
+  <script src="js/components/dashboard.js"></script>
+  <script src="js/components/documents.js"></script>
+  <script src="js/components/document-detail.js"></script>
+  <script src="js/components/search.js"></script>
+  <script src="js/components/chunks.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
